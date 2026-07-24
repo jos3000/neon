@@ -173,6 +173,7 @@ class MainScene extends Phaser.Scene {
       this.baseCenter.y,
       isHost ? 'player' : 'guest'
     );
+    this.player.setDepth(2);
     this.player.setCollideWorldBounds(true);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
     this.localPeerId = clientPeer && clientPeer.id ? clientPeer.id : null;
@@ -642,7 +643,7 @@ class MainScene extends Phaser.Scene {
       this.score += type === 'spawner' ? 500 : type === 'big' ? 50 : 10;
       this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
     } else {
-      enemySprite.setTint(0xffffff);
+      enemySprite.setTintFill(0xffffff);
       this.time.delayedCall(50, () => {
         if (enemySprite && enemySprite.active) enemySprite.clearTint();
       });
@@ -673,7 +674,7 @@ class MainScene extends Phaser.Scene {
     player.setVisible(false);
     this.broadcastEffect('death', player.x, player.y);
 
-    this.time.delayedCall(5000, () => {
+    this.time.delayedCall(3000, () => {
       if (!player || !player.active) return;
       this.respawnPlayer(player);
     });
@@ -687,7 +688,7 @@ class MainScene extends Phaser.Scene {
     this.handlePlayerDeath(player as Phaser.Physics.Arcade.Sprite);
   }
 
-  getAlivePlayers() {
+  getAlivePlayers(): Phaser.Physics.Arcade.Sprite[] {
     const alivePlayers: Phaser.Physics.Arcade.Sprite[] = [];
     if (this.player && this.player.active && !this.player.getData('isDead')) {
       alivePlayers.push(this.player);
@@ -705,6 +706,7 @@ class MainScene extends Phaser.Scene {
     if (!isHost || this.gameOver) return;
     if (!this.remotePlayers[peerId]) {
       const rp = this.physics.add.sprite(this.baseCenter.x, this.baseCenter.y, 'guest');
+      rp.setDepth(2);
       rp.setCollideWorldBounds(true);
       this.remotePlayers[peerId] = rp;
       this.applyPlayerColor(rp, peerId);
@@ -734,6 +736,7 @@ class MainScene extends Phaser.Scene {
     const bullet: Phaser.GameObjects.Sprite = this.bullets.create(x, y, 'bullet');
     if (!bullet) return null;
 
+    bullet.setDepth(1);
     bullet.setActive(true).setVisible(true);
     bullet.setData('syncId', id);
     bullet.setData('born', 0);
