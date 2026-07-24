@@ -200,6 +200,8 @@ class MainScene extends Phaser.Scene {
         this.isPaused = false;
         this.lastFired = 0;
         this.fireRate = 120;
+        this.gameStarted = false;
+        this.countdownValue = 3;
 
         // Local player (host always has a player; client's own player also exists)
         this.player = this.physics.add.sprite(1000, 1000, isHost ? 'player' : 'guest');
@@ -234,6 +236,17 @@ class MainScene extends Phaser.Scene {
         this.gameOverText = this.add.text(this.scale.width / 2, this.scale.height / 2, 'GAME OVER\nTap to Restart', {
             fontSize: '48px', fill: '#ff00ff', align: 'center', fontFamily: 'Courier', fontStyle: 'bold'
         }).setOrigin(0.5).setScrollFactor(0).setVisible(false).setDepth(300);
+
+        this.countdownText = this.add.text(this.scale.width / 2, this.scale.height / 2 - 60, '3', {
+            fontSize: '72px', fill: '#ffff00', align: 'center', fontFamily: 'Courier', fontStyle: 'bold'
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(400);
+
+        this.countdownTimer = this.time.addEvent({
+            delay: 1000,
+            callback: this.tickCountdown,
+            callbackScope: this,
+            loop: true
+        });
 
         // Input handling (same as original)
         this.input.addPointer(2);
@@ -344,8 +357,26 @@ class MainScene extends Phaser.Scene {
     }
 
     // --- Game logic (host) ---
-    spawnEnemy() {
+    tickCountdown() {
         if (this.gameOver || this.isPaused) return;
+
+        this.countdownValue -= 1;
+        if (this.countdownValue > 0) {
+            this.countdownText.setText(String(this.countdownValue));
+        } else {
+            this.countdownText.setText('GO!');
+            this.gameStarted = true;
+            this.countdownTimer.remove(false);
+            this.time.delayedCall(500, () => {
+                if (this.countdownText && this.countdownText.active) {
+                    this.countdownText.destroy();
+                }
+            });
+        }
+    }
+
+    spawnEnemy() {
+        if (!this.gameStarted || this.gameOver || this.isPaused) return;
         let cam = this.cameras.main;
         let angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
         let dist = Math.max(cam.width, cam.height) / 2 + 100;
@@ -361,7 +392,7 @@ class MainScene extends Phaser.Scene {
     }
 
     spawnBigEnemy() {
-        if (this.gameOver || this.isPaused) return;
+        if (!this.gameStarted || this.gameOver || this.isPaused) return;
         let cam = this.cameras.main;
         let angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
         let dist = Math.max(cam.width, cam.height) / 2 + 150;
@@ -474,11 +505,11 @@ class MainScene extends Phaser.Scene {
         // Build snapshot
         const players = {};
         // host player
-        players['host'] = { x: this.player.x, y: this.player.y, r: this.player.rotation };
+        players['host'] = { x: this.player.x, y: this.player.y, r: this.player.rotation, isDead: !!this.player.getData('isDead') };
         // remote players
         for (let id in this.remotePlayers) {
             let rp = this.remotePlayers[id];
-            players[id] = { x: rp.x, y: rp.y, r: rp.rotation };
+            players[id] = { x: rp.x, y: rp.y, r: rp.rotation, isDead: !!rp.getData('isDead') };
         }
 
         const state = {
@@ -549,24 +580,39 @@ class MainScene extends Phaser.Scene {
         // Update our own player's position (to reflect what host thinks, but we also move locally)
         if (data.players) {
             for (let id in data.players) {
+                const playerState = data.players[id];
+                const isDead = !!(playerState && playerState.isDead);
+
                 if (id === 'host') {
                     // Host's player in world – we can show a separate sprite for host
                     if (!this.hostPlayerSprite) {
-                        this.hostPlayerSprite = this.add.sprite(data.players.host.x, data.players.host.y, 'player');
+                        this.hostPlayerSprite = this.add.sprite(playerState.x, playerState.y, 'player');
                         this.hostPlayerSprite.setDepth(2);
                     }
-                    this.hostPlayerSprite.setPosition(data.players.host.x, data.players.host.y);
-                    this.hostPlayerSprite.rotation = data.players.host.r;
+                    this.hostPlayerSprite.setPosition(playerState.x, playerState.y);
+                    this.hostPlayerSprite.rotation = playerState.r;
+                    this.hostPlayerSprite.setVisible(!isDead);
+                } else if (id === this.localPeerId) {
+                    // Our own client player state from host
+                    if (this.player) {
+                        this.player.setData('isDead', isDead);
+                        this.player.setVisible(!isDead);
+                        if (!isDead) {
+                            this.player.setPosition(playerState.x, playerState.y);
+                            this.player.rotation = playerState.r;
+                        }
+                    }
                 } else if (id !== 'host' && id !== this.localPeerId) {
                     // Other remote players (not us)
                     if (!this.otherRemoteSprites) this.otherRemoteSprites = {};
                     if (!this.otherRemoteSprites[id]) {
-                        let spr = this.add.sprite(data.players[id].x, data.players[id].y, 'guest');
+                        let spr = this.add.sprite(playerState.x, playerState.y, 'guest');
                         spr.setDepth(2);
                         this.otherRemoteSprites[id] = spr;
                     }
-                    this.otherRemoteSprites[id].setPosition(data.players[id].x, data.players[id].y);
-                    this.otherRemoteSprites[id].rotation = data.players[id].r;
+                    this.otherRemoteSprites[id].setPosition(playerState.x, playerState.y);
+                    this.otherRemoteSprites[id].rotation = playerState.r;
+                    this.otherRemoteSprites[id].setVisible(!isDead);
                 }
             }
             // Remove sprites of disconnected players
@@ -582,6 +628,7 @@ class MainScene extends Phaser.Scene {
     resize(gameSize) {
         if (this.gameOverText) this.gameOverText.setPosition(gameSize.width / 2, gameSize.height / 2);
         if (this.pauseText) this.pauseText.setPosition(gameSize.width / 2, gameSize.height / 2);
+        if (this.countdownText) this.countdownText.setPosition(gameSize.width / 2, gameSize.height / 2 - 60);
     }
 
     update(time, delta) {
@@ -592,7 +639,7 @@ class MainScene extends Phaser.Scene {
             else if (!this.gameOver) this.physics.resume();
         }
 
-        if (this.gameOver || this.isPaused) return;
+        if (this.gameOver || this.isPaused || !this.gameStarted) return;
 
         // Movement (local player)
         let moveX = 0, moveY = 0;
