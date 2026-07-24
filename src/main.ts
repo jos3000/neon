@@ -12,6 +12,7 @@ type PlayerSnapshot = {
 };
 
 type EnemySnapshot = {
+  id: string;
   x: number;
   y: number;
   type: string;
@@ -19,6 +20,7 @@ type EnemySnapshot = {
 };
 
 type BulletSnapshot = {
+  id: string;
   x: number;
   y: number;
 };
@@ -52,6 +54,10 @@ class MainScene extends Phaser.Scene {
   private remotePlayers: Record<string, Phaser.Physics.Arcade.Sprite> = {};
   private bullets!: Phaser.Physics.Arcade.Group;
   private enemies!: Phaser.Physics.Arcade.Group;
+  private enemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
+  private bulletSprites: Record<string, Phaser.GameObjects.Sprite> = {};
+  private nextEnemyId = 0;
+  private nextBulletId = 0;
   private emitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private scoreText!: Phaser.GameObjects.Text;
   private pauseText!: Phaser.GameObjects.Text;
@@ -342,8 +348,10 @@ class MainScene extends Phaser.Scene {
     const dist = Math.max(cam.width, cam.height) / 2 + 100;
     const ex = Phaser.Math.Clamp(this.player!.x + Math.cos(angle) * dist, 20, 1980);
     const ey = Phaser.Math.Clamp(this.player!.y + Math.sin(angle) * dist, 20, 1980);
+    const enemyId = `enemy-${++this.nextEnemyId}`;
     const enemy = this.enemies.create(ex, ey, 'enemy');
     if (enemy) {
+      enemy.setData('syncId', enemyId);
       enemy.setData('type', 'normal');
       enemy.setData('hp', 1);
       enemy.setBounce(1);
@@ -359,8 +367,10 @@ class MainScene extends Phaser.Scene {
     const dist = Math.max(cam.width, cam.height) / 2 + 150;
     const ex = Phaser.Math.Clamp(this.player!.x + Math.cos(angle) * dist, 40, 1960);
     const ey = Phaser.Math.Clamp(this.player!.y + Math.sin(angle) * dist, 40, 1960);
+    const enemyId = `enemy-${++this.nextEnemyId}`;
     const enemy = this.enemies.create(ex, ey, 'bigenemy');
     if (enemy) {
+      enemy.setData('syncId', enemyId);
       enemy.setData('type', 'big');
       enemy.setData('hp', 5);
       enemy.setBounce(1);
@@ -468,6 +478,85 @@ class MainScene extends Phaser.Scene {
     }
   }
 
+  private createBulletSprite(x: number, y: number, id: string) {
+    const bullet: Phaser.GameObjects.Sprite = this.bullets.create(x, y, 'bullet');
+    if (!bullet) return null;
+
+    bullet.setActive(true).setVisible(true);
+    bullet.setData('syncId', id);
+    bullet.setData('born', 0);
+    bullet.update = function (t: number, d: number) {
+      const born = this.getData('born') + d;
+      this.setData('born', born);
+      if (born > 1500) this.destroy();
+    };
+
+    return bullet;
+  }
+
+  private syncEnemySprites(enemies: EnemySnapshot[]) {
+    const nextEnemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
+
+    enemies.forEach((enemy) => {
+      let sprite = this.enemySprites[enemy.id];
+      if (!sprite) {
+        sprite = this.enemies.create(enemy.x, enemy.y, enemy.type === 'big' ? 'bigenemy' : 'enemy');
+        if (!sprite) return;
+        sprite.setData('syncId', enemy.id);
+      }
+
+      sprite.setPosition(enemy.x, enemy.y);
+      sprite.rotation = enemy.r;
+      sprite.setVisible(true);
+      sprite.setActive(true);
+      sprite.setData('type', enemy.type);
+      sprite.setData('hp', enemy.type === 'big' ? 5 : 1);
+      nextEnemySprites[enemy.id] = sprite;
+    });
+
+    Object.keys(this.enemySprites).forEach((id) => {
+      if (!nextEnemySprites[id]) {
+        const sprite = this.enemySprites[id];
+        if (sprite) {
+          sprite.destroy();
+        }
+        delete this.enemySprites[id];
+      }
+    });
+
+    this.enemySprites = nextEnemySprites;
+  }
+
+  private syncBulletSprites(bullets: BulletSnapshot[]) {
+    const nextBulletSprites: Record<string, Phaser.GameObjects.Sprite> = {};
+
+    bullets.forEach((bullet) => {
+      let sprite = this.bulletSprites[bullet.id];
+      if (!sprite) {
+        sprite = this.createBulletSprite(bullet.x, bullet.y, bullet.id);
+      }
+
+      if (!sprite) return;
+
+      sprite.setPosition(bullet.x, bullet.y);
+      sprite.setVisible(true);
+      sprite.setActive(true);
+      nextBulletSprites[bullet.id] = sprite;
+    });
+
+    Object.keys(this.bulletSprites).forEach((id) => {
+      if (!nextBulletSprites[id]) {
+        const sprite = this.bulletSprites[id];
+        if (sprite) {
+          sprite.destroy();
+        }
+        delete this.bulletSprites[id];
+      }
+    });
+
+    this.bulletSprites = nextBulletSprites;
+  }
+
   broadcastState() {
     if (!isHost || !connections.length) return;
     const players: Record<string, { x: number; y: number; r: number; isDead: boolean }> = {};
@@ -487,14 +576,17 @@ class MainScene extends Phaser.Scene {
       score: this.score,
       players,
       enemies: this.enemies.getChildren().map((e: Phaser.GameObjects.Sprite) => ({
+        id: (e.getData('syncId') as string) || '',
         x: e.x,
         y: e.y,
         type: e.getData('type') as string,
         r: e.rotation,
       })),
-      bullets: this.bullets
-        .getChildren()
-        .map((b: Phaser.GameObjects.Sprite) => ({ x: b.x, y: b.y })),
+      bullets: this.bullets.getChildren().map((b: Phaser.GameObjects.Sprite) => ({
+        id: (b.getData('syncId') as string) || '',
+        x: b.x,
+        y: b.y,
+      })),
     };
 
     connections.forEach((conn) => conn.send(state));
@@ -543,16 +635,8 @@ class MainScene extends Phaser.Scene {
     if (isHost || !data || data.type !== 'state') return;
     this.scoreText.setText('SCORE: ' + data.score + ' | ROLE: CLIENT');
 
-    this.enemies.clear(true, true);
-    data.enemies.forEach((ed) => {
-      const en = this.enemies.create(ed.x, ed.y, ed.type === 'big' ? 'bigenemy' : 'enemy');
-      en.rotation = ed.r;
-    });
-
-    this.bullets.clear(true, true);
-    data.bullets.forEach((bd) => {
-      this.bullets.create(bd.x, bd.y, 'bullet');
-    });
+    this.syncEnemySprites(data.enemies || []);
+    this.syncBulletSprites(data.bullets || []);
 
     if (data.players) {
       for (const id in data.players) {
@@ -651,21 +735,15 @@ class MainScene extends Phaser.Scene {
       if (isShooting) {
         this.player!.rotation = aimAngle;
         if (time > this.lastFired) {
-          const bullet = this.bullets.create(this.player!.x, this.player!.y, 'bullet');
+          const bulletId = `bullet-${++this.nextBulletId}`;
+          const bullet = this.createBulletSprite(this.player!.x, this.player!.y, bulletId);
           if (bullet) {
-            bullet.setActive(true).setVisible(true);
             this.physics.velocityFromRotation(
               aimAngle,
               1000,
               bullet.body.velocity as Phaser.Math.Vector2
             );
             bullet.rotation = aimAngle;
-            bullet.setData('born', 0);
-            bullet.update = function (t: number, d: number) {
-              const born = (this as Phaser.GameObjects.Sprite).getData('born') + d;
-              (this as Phaser.GameObjects.Sprite).setData('born', born);
-              if (born > 1500) this.destroy();
-            };
           }
           this.lastFired = time + this.fireRate;
         }
@@ -694,21 +772,19 @@ class MainScene extends Phaser.Scene {
 
         if (rp.getData('shoot') && time > rp.getData('lastFired')) {
           const angle = rp.getData('aimAngle') || 0;
-          const bul: Phaser.GameObjects.Sprite | null = this.bullets.create(rp.x, rp.y, 'bullet');
+          const bulletId = `bullet-${++this.nextBulletId}`;
+          const bul: Phaser.GameObjects.Sprite | null = this.createBulletSprite(
+            rp.x,
+            rp.y,
+            bulletId
+          );
           if (bul) {
-            bul.setActive(true).setVisible(true);
             this.physics.velocityFromRotation(
               angle,
               1000,
               bul.body.velocity as Phaser.Math.Vector2
             );
             bul.rotation = angle;
-            bul.setData('born', 0);
-            bul.update = function (t: number, d: number) {
-              const born = (this as Phaser.GameObjects.Sprite).getData('born') + d;
-              (this as Phaser.GameObjects.Sprite).setData('born', born);
-              if (born > 1500) this.destroy();
-            };
             if (synth) synth.playShot();
           }
           rp.setData('lastFired', time + this.fireRate);
