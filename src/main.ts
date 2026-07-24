@@ -159,7 +159,11 @@ class MainScene extends Phaser.Scene {
     this.fireRate = 120;
     this.gameStarted = true;
 
-    this.player = this.physics.add.sprite(this.baseCenter.x, this.baseCenter.y, isHost ? 'player' : 'guest');
+    this.player = this.physics.add.sprite(
+      this.baseCenter.x,
+      this.baseCenter.y,
+      isHost ? 'player' : 'guest'
+    );
     this.player.setCollideWorldBounds(true);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
     this.localPeerId = clientPeer && clientPeer.id ? clientPeer.id : null;
@@ -471,7 +475,9 @@ class MainScene extends Phaser.Scene {
   }
 
   private isInBaseArea(x: number, y: number) {
-    return Phaser.Math.Distance.Between(this.baseCenter.x, this.baseCenter.y, x, y) <= this.baseRadius;
+    return (
+      Phaser.Math.Distance.Between(this.baseCenter.x, this.baseCenter.y, x, y) <= this.baseRadius
+    );
   }
 
   private getSpawnPointOutsideBase() {
@@ -721,7 +727,7 @@ class MainScene extends Phaser.Scene {
 
     bullets.forEach((bullet) => {
       let sprite = this.bulletSprites[bullet.id];
-      if (!sprite) {
+      if (!sprite || !sprite.scene || !sprite.active) {
         sprite = this.createBulletSprite(bullet.x, bullet.y, bullet.id);
       }
 
@@ -736,7 +742,9 @@ class MainScene extends Phaser.Scene {
     Object.keys(this.bulletSprites).forEach((id) => {
       if (!nextBulletSprites[id]) {
         const sprite = this.bulletSprites[id];
-        if (sprite) {
+        if (sprite && sprite.scene) {
+          sprite.setVisible(false);
+          sprite.setActive(false);
           sprite.destroy();
         }
         delete this.bulletSprites[id];
@@ -974,7 +982,11 @@ class MainScene extends Phaser.Scene {
 
         if (mx !== 0 || my !== 0) rp.rotation = Math.atan2(my, mx);
 
-        if (rp.getData('shoot') && !this.isInBaseArea(rp.x, rp.y) && time > rp.getData('lastFired')) {
+        if (
+          rp.getData('shoot') &&
+          !this.isInBaseArea(rp.x, rp.y) &&
+          time > rp.getData('lastFired')
+        ) {
           const angle = rp.getData('aimAngle') || 0;
           const bulletId = `bullet-${++this.nextBulletId}`;
           const bul: Phaser.GameObjects.Sprite | null = this.createBulletSprite(
@@ -1011,11 +1023,20 @@ class MainScene extends Phaser.Scene {
         });
 
         if (this.isInBaseArea(enemy.x, enemy.y)) {
-          const angle = Phaser.Math.Angle.Between(this.baseCenter.x, this.baseCenter.y, enemy.x, enemy.y);
+          const angle = Phaser.Math.Angle.Between(
+            this.baseCenter.x,
+            this.baseCenter.y,
+            enemy.x,
+            enemy.y
+          );
           const safeX = this.baseCenter.x + Math.cos(angle) * (this.baseRadius + 25);
           const safeY = this.baseCenter.y + Math.sin(angle) * (this.baseRadius + 25);
           enemy.setPosition(safeX, safeY);
-          this.physics.velocityFromRotation(angle + Math.PI, 180, enemy.body.velocity as Phaser.Math.Vector2);
+          this.physics.velocityFromRotation(
+            angle + Math.PI,
+            180,
+            enemy.body.velocity as Phaser.Math.Vector2
+          );
           enemy.rotation = angle + Math.PI;
           return;
         }
