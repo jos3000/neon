@@ -205,6 +205,7 @@ class MainScene extends Phaser.Scene {
         this.player = this.physics.add.sprite(1000, 1000, isHost ? 'player' : 'guest');
         this.player.setCollideWorldBounds(true);
         this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+        this.localPeerId = (clientPeer && clientPeer.id) ? clientPeer.id : null;
 
         // Remote players (only host uses this map)
         this.remotePlayers = {}; // key: peerId, value: Phaser.Sprite
@@ -556,7 +557,7 @@ class MainScene extends Phaser.Scene {
                     }
                     this.hostPlayerSprite.setPosition(data.players.host.x, data.players.host.y);
                     this.hostPlayerSprite.rotation = data.players.host.r;
-                } else if (id !== 'host' && id !== this.player.name) {
+                } else if (id !== 'host' && id !== this.localPeerId) {
                     // Other remote players (not us)
                     if (!this.otherRemoteSprites) this.otherRemoteSprites = {};
                     if (!this.otherRemoteSprites[id]) {
