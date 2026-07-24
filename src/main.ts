@@ -332,20 +332,24 @@ class MainScene extends Phaser.Scene {
     }
   }
 
-  hitEnemy(bullet: Phaser.GameObjects.GameObject, enemy: Phaser.GameObjects.Sprite) {
+  hitEnemy(
+    bullet: Phaser.Types.Physics.Arcade.GameObjectWithBody,
+    enemy: Phaser.Types.Physics.Arcade.GameObjectWithBody
+  ) {
     bullet.destroy();
-    const hp = enemy.getData('hp') - 1;
-    enemy.setData('hp', hp);
+    const enemySprite = enemy as Phaser.GameObjects.Sprite;
+    const hp = enemySprite.getData('hp') - 1;
+    enemySprite.setData('hp', hp);
     if (hp <= 0) {
-      this.emitter.explode(10, enemy.x, enemy.y);
-      enemy.destroy();
-      this.score += enemy.getData('type') === 'big' ? 50 : 10;
+      this.emitter.explode(10, enemySprite.x, enemySprite.y);
+      enemySprite.destroy();
+      this.score += enemySprite.getData('type') === 'big' ? 50 : 10;
       this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
       if (synth && isHost) synth.playExplosion();
     } else {
-      enemy.setTint(0xffffff);
+      enemySprite.setTint(0xffffff);
       this.time.delayedCall(50, () => {
-        if (enemy && enemy.active) enemy.clearTint();
+        if (enemySprite && enemySprite.active) enemySprite.clearTint();
       });
     }
     this.cameras.main.shake(30, 0.003);
@@ -382,9 +386,12 @@ class MainScene extends Phaser.Scene {
     });
   }
 
-  hitPlayer(player: Phaser.Physics.Arcade.Sprite, enemy: Phaser.GameObjects.GameObject) {
+  hitPlayer(
+    player: Phaser.Types.Physics.Arcade.GameObjectWithBody,
+    enemy: Phaser.Types.Physics.Arcade.GameObjectWithBody
+  ) {
     if (this.gameOver) return;
-    this.handlePlayerDeath(player);
+    this.handlePlayerDeath(player as Phaser.Physics.Arcade.Sprite);
   }
 
   getAlivePlayers() {
@@ -610,7 +617,11 @@ class MainScene extends Phaser.Scene {
           const bullet = this.bullets.create(this.player!.x, this.player!.y, 'bullet');
           if (bullet) {
             bullet.setActive(true).setVisible(true);
-            this.physics.velocityFromRotation(aimAngle, 1000, bullet.body.velocity);
+            this.physics.velocityFromRotation(
+              aimAngle,
+              1000,
+              bullet.body.velocity as Phaser.Math.Vector2
+            );
             bullet.rotation = aimAngle;
             bullet.setData('born', 0);
             bullet.update = function (t: number, d: number) {
@@ -649,7 +660,11 @@ class MainScene extends Phaser.Scene {
           const bul: Phaser.GameObjects.Sprite | null = this.bullets.create(rp.x, rp.y, 'bullet');
           if (bul) {
             bul.setActive(true).setVisible(true);
-            this.physics.velocityFromRotation(angle, 1000, bul.body.velocity);
+            this.physics.velocityFromRotation(
+              angle,
+              1000,
+              bul.body.velocity as Phaser.Math.Vector2
+            );
             bul.rotation = angle;
             bul.setData('born', 0);
             bul.update = function (t: number, d: number) {
@@ -686,7 +701,11 @@ class MainScene extends Phaser.Scene {
             enemy.setData('wanderDirection', wanderDirection);
             enemy.setData('nextTurnAt', time + 800);
           }
-          this.physics.velocityFromRotation(wanderDirection, 80, enemy.body.velocity);
+          this.physics.velocityFromRotation(
+            wanderDirection,
+            80,
+            enemy.body.velocity as Phaser.Math.Vector2
+          );
           enemy.rotation = wanderDirection;
         } else {
           this.physics.moveToObject(enemy, target, 150);

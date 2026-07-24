@@ -3,11 +3,6 @@
     "private": true,
     "version": "1.0.0",
     "type": "module",
-    "scripts": {
-        "dev": "vite",
-        "build": "tsc --noEmit && vite build",
-        "preview": "vite preview"
-    },
     "dependencies": {
         "peerjs": "^1.5.1",
         "phaser": "^3.90.0"
