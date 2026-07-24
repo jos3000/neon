@@ -256,8 +256,7 @@ class MainScene extends Phaser.Scene {
         this.isPaused = false;
         this.lastFired = 0;
         this.fireRate = 120;
-        this.gameStarted = false;
-        this.countdownValue = 3;
+        this.gameStarted = true;
 
         // Local player (host always has a player; client's own player also exists)
         this.player = this.physics.add.sprite(1000, 1000, isHost ? 'player' : 'guest');
@@ -292,17 +291,6 @@ class MainScene extends Phaser.Scene {
         this.gameOverText = this.add.text(this.scale.width / 2, this.scale.height / 2, 'GAME OVER\nTap to Restart', {
             fontSize: '48px', fill: '#ff00ff', align: 'center', fontFamily: 'Courier', fontStyle: 'bold'
         }).setOrigin(0.5).setScrollFactor(0).setVisible(false).setDepth(300);
-
-        this.countdownText = this.add.text(this.scale.width / 2, this.scale.height / 2 - 60, '3', {
-            fontSize: '72px', fill: '#ffff00', align: 'center', fontFamily: 'Courier', fontStyle: 'bold'
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(400);
-
-        this.countdownTimer = this.time.addEvent({
-            delay: 1000,
-            callback: this.tickCountdown,
-            callbackScope: this,
-            loop: true
-        });
 
         // unlock audio on first input (user gesture requirement)
         this.input.once('pointerdown', () => { if (window.synth) window.synth.unlock(); });
@@ -416,26 +404,6 @@ class MainScene extends Phaser.Scene {
     }
 
     // --- Game logic (host) ---
-    tickCountdown() {
-        if (this.gameOver || this.isPaused) return;
-
-        this.countdownValue -= 1;
-        if (this.countdownValue > 0) {
-            this.countdownText.setText(String(this.countdownValue));
-            if (window.synth) window.synth.playTick();
-        } else {
-            this.countdownText.setText('GO!');
-            this.gameStarted = true;
-            if (window.synth) window.synth.playGo();
-            this.countdownTimer.remove(false);
-            this.time.delayedCall(500, () => {
-                if (this.countdownText && this.countdownText.active) {
-                    this.countdownText.destroy();
-                }
-            });
-        }
-    }
-
     spawnEnemy() {
         if (!this.gameStarted || this.gameOver || this.isPaused) return;
         let cam = this.cameras.main;
@@ -693,7 +661,6 @@ class MainScene extends Phaser.Scene {
     resize(gameSize) {
         if (this.gameOverText) this.gameOverText.setPosition(gameSize.width / 2, gameSize.height / 2);
         if (this.pauseText) this.pauseText.setPosition(gameSize.width / 2, gameSize.height / 2);
-        if (this.countdownText) this.countdownText.setPosition(gameSize.width / 2, gameSize.height / 2 - 60);
     }
 
     update(time, delta) {
