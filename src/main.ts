@@ -86,6 +86,9 @@ class MainScene extends Phaser.Scene {
   private playerIndicators: Record<string, Phaser.GameObjects.Graphics> = {};
   private playerColors: Record<string, number> = {};
   private enemySpeed = 150;
+  private baseCenter = { x: 1000, y: 1600 };
+  private baseRadius = 180;
+  private baseGraphics!: Phaser.GameObjects.Graphics;
   private spawnTimer?: Phaser.Time.TimerEvent;
   private bigSpawnTimer?: Phaser.Time.TimerEvent;
   private broadcastTimer?: Phaser.Time.TimerEvent;
@@ -143,13 +146,20 @@ class MainScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, 2000, 2000);
     this.add.tileSprite(1000, 1000, 2000, 2000, 'grid');
 
+    this.baseGraphics = this.add.graphics();
+    this.baseGraphics.fillStyle(0x00ffcc, 0.16);
+    this.baseGraphics.lineStyle(3, 0x00ffcc, 0.8);
+    this.baseGraphics.strokeCircle(this.baseCenter.x, this.baseCenter.y, this.baseRadius);
+    this.baseGraphics.fillCircle(this.baseCenter.x, this.baseCenter.y, this.baseRadius);
+    this.baseGraphics.setDepth(40);
+
     this.gameOver = false;
     this.isPaused = false;
     this.lastFired = 0;
     this.fireRate = 120;
     this.gameStarted = true;
 
-    this.player = this.physics.add.sprite(1000, 1000, isHost ? 'player' : 'guest');
+    this.player = this.physics.add.sprite(this.baseCenter.x, this.baseCenter.y, isHost ? 'player' : 'guest');
     this.player.setCollideWorldBounds(true);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
     this.localPeerId = clientPeer && clientPeer.id ? clientPeer.id : null;
@@ -460,15 +470,34 @@ class MainScene extends Phaser.Scene {
     });
   }
 
-  spawnEnemy() {
-    if (!this.gameStarted || this.gameOver || this.isPaused) return;
+  private isInBaseArea(x: number, y: number) {
+    return Phaser.Math.Distance.Between(this.baseCenter.x, this.baseCenter.y, x, y) <= this.baseRadius;
+  }
+
+  private getSpawnPointOutsideBase() {
     const cam = this.cameras.main;
     const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
-    const dist = Math.max(cam.width, cam.height) / 2 + 100;
-    const ex = Phaser.Math.Clamp(this.player!.x + Math.cos(angle) * dist, 20, 1980);
-    const ey = Phaser.Math.Clamp(this.player!.y + Math.sin(angle) * dist, 20, 1980);
+    const dist = Math.max(cam.width, cam.height) / 2 + 220;
+
+    for (let i = 0; i < 20; i++) {
+      const x = Phaser.Math.Clamp(this.player!.x + Math.cos(angle) * dist, 40, 1960);
+      const y = Phaser.Math.Clamp(this.player!.y + Math.sin(angle) * dist, 40, 1960);
+      if (!this.isInBaseArea(x, y)) {
+        return { x, y };
+      }
+    }
+
+    return {
+      x: this.baseCenter.x + this.baseRadius + 80,
+      y: this.baseCenter.y - this.baseRadius - 80,
+    };
+  }
+
+  spawnEnemy() {
+    if (!this.gameStarted || this.gameOver || this.isPaused) return;
+    const spawn = this.getSpawnPointOutsideBase();
     const enemyId = `enemy-${++this.nextEnemyId}`;
-    const enemy = this.enemies.create(ex, ey, 'enemy');
+    const enemy = this.enemies.create(spawn.x, spawn.y, 'enemy');
     if (enemy) {
       enemy.setData('syncId', enemyId);
       enemy.setData('type', 'normal');
@@ -481,13 +510,9 @@ class MainScene extends Phaser.Scene {
 
   spawnBigEnemy() {
     if (!this.gameStarted || this.gameOver || this.isPaused) return;
-    const cam = this.cameras.main;
-    const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
-    const dist = Math.max(cam.width, cam.height) / 2 + 150;
-    const ex = Phaser.Math.Clamp(this.player!.x + Math.cos(angle) * dist, 40, 1960);
-    const ey = Phaser.Math.Clamp(this.player!.y + Math.sin(angle) * dist, 40, 1960);
+    const spawn = this.getSpawnPointOutsideBase();
     const enemyId = `enemy-${++this.nextEnemyId}`;
-    const enemy = this.enemies.create(ex, ey, 'bigenemy');
+    const enemy = this.enemies.create(spawn.x, spawn.y, 'bigenemy');
     if (enemy) {
       enemy.setData('syncId', enemyId);
       enemy.setData('type', 'big');
@@ -563,8 +588,8 @@ class MainScene extends Phaser.Scene {
   respawnPlayer(player: Phaser.Physics.Arcade.Sprite) {
     if (!player || !player.active) return;
 
-    const spawnX = 1000 + Phaser.Math.Between(-200, 200);
-    const spawnY = 1000 + Phaser.Math.Between(-200, 200);
+    const spawnX = this.baseCenter.x + Phaser.Math.Between(-80, 80);
+    const spawnY = this.baseCenter.y + Phaser.Math.Between(-80, 80);
 
     player.setData('isDead', false);
     player.clearTint();
@@ -615,7 +640,7 @@ class MainScene extends Phaser.Scene {
   handleRemoteInput(peerId: string, data: PeerInputMessage) {
     if (!isHost || this.gameOver) return;
     if (!this.remotePlayers[peerId]) {
-      const rp = this.physics.add.sprite(1000, 1000, 'guest');
+      const rp = this.physics.add.sprite(this.baseCenter.x, this.baseCenter.y, 'guest');
       rp.setCollideWorldBounds(true);
       this.remotePlayers[peerId] = rp;
       this.applyPlayerColor(rp, peerId);
@@ -913,7 +938,7 @@ class MainScene extends Phaser.Scene {
 
       if (isShooting) {
         this.player!.rotation = aimAngle;
-        if (time > this.lastFired) {
+        if (!this.isInBaseArea(this.player!.x, this.player!.y) && time > this.lastFired) {
           const bulletId = `bullet-${++this.nextBulletId}`;
           const bullet = this.createBulletSprite(this.player!.x, this.player!.y, bulletId);
           if (bullet) {
@@ -949,7 +974,7 @@ class MainScene extends Phaser.Scene {
 
         if (mx !== 0 || my !== 0) rp.rotation = Math.atan2(my, mx);
 
-        if (rp.getData('shoot') && time > rp.getData('lastFired')) {
+        if (rp.getData('shoot') && !this.isInBaseArea(rp.x, rp.y) && time > rp.getData('lastFired')) {
           const angle = rp.getData('aimAngle') || 0;
           const bulletId = `bullet-${++this.nextBulletId}`;
           const bul: Phaser.GameObjects.Sprite | null = this.createBulletSprite(
@@ -984,6 +1009,16 @@ class MainScene extends Phaser.Scene {
             target = player;
           }
         });
+
+        if (this.isInBaseArea(enemy.x, enemy.y)) {
+          const angle = Phaser.Math.Angle.Between(this.baseCenter.x, this.baseCenter.y, enemy.x, enemy.y);
+          const safeX = this.baseCenter.x + Math.cos(angle) * (this.baseRadius + 25);
+          const safeY = this.baseCenter.y + Math.sin(angle) * (this.baseRadius + 25);
+          enemy.setPosition(safeX, safeY);
+          this.physics.velocityFromRotation(angle + Math.PI, 180, enemy.body.velocity as Phaser.Math.Vector2);
+          enemy.rotation = angle + Math.PI;
+          return;
+        }
 
         if (!target || minDist > 600) {
           let wanderDirection = enemy.getData('wanderDirection') || 0;
