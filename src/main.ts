@@ -544,13 +544,13 @@ class MainScene extends Phaser.Scene {
     this.scoreText.setText('SCORE: ' + data.score + ' | ROLE: CLIENT');
 
     this.enemies.clear(true, true);
-    data.enemies.forEach((ed: EnemySnapshot) => {
+    data.enemies.forEach((ed) => {
       const en = this.enemies.create(ed.x, ed.y, ed.type === 'big' ? 'bigenemy' : 'enemy');
       en.rotation = ed.r;
     });
 
     this.bullets.clear(true, true);
-    data.bullets.forEach((bd: BulletSnapshot) => {
+    data.bullets.forEach((bd) => {
       this.bullets.create(bd.x, bd.y, 'bullet');
     });
 
