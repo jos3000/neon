@@ -4,6 +4,43 @@ import Phaser from 'phaser';
 import Peer, { DataConnection, PeerError } from 'peerjs';
 import { Synth } from './Synth';
 
+type PlayerSnapshot = {
+  x: number;
+  y: number;
+  r: number;
+  isDead: boolean;
+};
+
+type EnemySnapshot = {
+  x: number;
+  y: number;
+  type: string;
+  r: number;
+};
+
+type BulletSnapshot = {
+  x: number;
+  y: number;
+};
+
+type PeerSnapshotMessage = {
+  type: 'state';
+  score: number;
+  players: Record<string, PlayerSnapshot>;
+  enemies: EnemySnapshot[];
+  bullets: BulletSnapshot[];
+};
+
+type PeerInputMessage = {
+  type: 'input';
+  moveX: number;
+  moveY: number;
+  shoot: boolean;
+  aimAngle: number;
+};
+
+type PeerMessage = PeerSnapshotMessage | PeerInputMessage;
+
 class MainScene extends Phaser.Scene {
   private score = 0;
   private gameOver = false;
@@ -408,7 +445,7 @@ class MainScene extends Phaser.Scene {
     return alivePlayers;
   }
 
-  handleRemoteInput(peerId: string, data: any) {
+  handleRemoteInput(peerId: string, data: PeerInputMessage) {
     if (!isHost || this.gameOver) return;
     if (!this.remotePlayers[peerId]) {
       const rp = this.physics.add.sprite(1000, 1000, 'guest');
@@ -445,14 +482,14 @@ class MainScene extends Phaser.Scene {
       players[id] = { x: rp.x, y: rp.y, r: rp.rotation, isDead: !!rp.getData('isDead') };
     }
 
-    const state = {
+    const state: PeerSnapshotMessage = {
       type: 'state',
       score: this.score,
       players,
       enemies: this.enemies.getChildren().map((e: Phaser.GameObjects.Sprite) => ({
         x: e.x,
         y: e.y,
-        type: e.getData('type'),
+        type: e.getData('type') as string,
         r: e.rotation,
       })),
       bullets: this.bullets
@@ -502,18 +539,18 @@ class MainScene extends Phaser.Scene {
     });
   }
 
-  receiveState(data: any) {
+  receiveState(data: PeerSnapshotMessage) {
     if (isHost || !data || data.type !== 'state') return;
     this.scoreText.setText('SCORE: ' + data.score + ' | ROLE: CLIENT');
 
     this.enemies.clear(true, true);
-    data.enemies.forEach((ed: any) => {
+    data.enemies.forEach((ed: EnemySnapshot) => {
       const en = this.enemies.create(ed.x, ed.y, ed.type === 'big' ? 'bigenemy' : 'enemy');
       en.rotation = ed.r;
     });
 
     this.bullets.clear(true, true);
-    data.bullets.forEach((bd: any) => {
+    data.bullets.forEach((bd: BulletSnapshot) => {
       this.bullets.create(bd.x, bd.y, 'bullet');
     });
 
@@ -774,8 +811,8 @@ function selectSector(sector: string) {
     conn.on('open', () => {
       console.log('Client connected:', conn.peer);
     });
-    conn.on('data', (data: any) => {
-      if (gameScene && gameScene.handleRemoteInput) {
+    conn.on('data', (data: PeerMessage) => {
+      if (data.type === 'input' && gameScene && gameScene.handleRemoteInput) {
         gameScene.handleRemoteInput(conn.peer, data);
       }
     });
@@ -840,8 +877,8 @@ function joinSector(targetPeerId: string, sector: string) {
       startGameAsClient(conn);
     });
 
-    conn.on('data', (data) => {
-      if (gameScene && gameScene.receiveState) {
+    conn.on('data', (data: PeerMessage) => {
+      if (data.type === 'state' && gameScene && gameScene.receiveState) {
         gameScene.receiveState(data);
       }
     });
