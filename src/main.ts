@@ -41,7 +41,14 @@ type PeerInputMessage = {
   aimAngle: number;
 };
 
-type PeerMessage = PeerSnapshotMessage | PeerInputMessage;
+type PeerEffectMessage = {
+  type: 'effect';
+  effect: 'explosion' | 'hit' | 'spawn' | 'big-spawn' | 'death' | 'shot';
+  x?: number;
+  y?: number;
+};
+
+type PeerMessage = PeerSnapshotMessage | PeerInputMessage | PeerEffectMessage;
 
 class MainScene extends Phaser.Scene {
   private score = 0;
@@ -356,7 +363,7 @@ class MainScene extends Phaser.Scene {
       enemy.setData('hp', 1);
       enemy.setBounce(1);
       enemy.setCollideWorldBounds(true);
-      if (synth && isHost) synth.playHit();
+      if (isHost) this.broadcastEffect('spawn');
     }
   }
 
@@ -375,8 +382,49 @@ class MainScene extends Phaser.Scene {
       enemy.setData('hp', 5);
       enemy.setBounce(1);
       enemy.setCollideWorldBounds(true);
-      if (synth && isHost) synth.playBigSpawn();
+      if (isHost) this.broadcastEffect('big-spawn');
     }
+  }
+
+  private applyEffect(effect: PeerEffectMessage['effect'], x?: number, y?: number) {
+    switch (effect) {
+      case 'explosion':
+        if (x !== undefined && y !== undefined) this.emitter.explode(10, x, y);
+        if (synth) synth.playExplosion();
+        break;
+      case 'hit':
+        if (x !== undefined && y !== undefined) this.emitter.explode(6, x, y);
+        if (synth) synth.playHit();
+        break;
+      case 'spawn':
+        if (synth) synth.playHit();
+        break;
+      case 'big-spawn':
+        if (synth) synth.playBigSpawn();
+        break;
+      case 'death':
+        if (x !== undefined && y !== undefined) this.emitter.explode(30, x, y);
+        if (synth) synth.playDeath();
+        break;
+      case 'shot':
+        if (synth) synth.playShot();
+        break;
+    }
+  }
+
+  private broadcastEffect(effect: PeerEffectMessage['effect'], x?: number, y?: number) {
+    this.applyEffect(effect, x, y);
+    if (!isHost) return;
+    if (!connections.length) return;
+    const message: PeerEffectMessage = { type: 'effect', effect, x, y };
+    connections.forEach((conn) => conn.send(message));
+  }
+
+  private showEnemyImpact(enemySprite: Phaser.GameObjects.Sprite | null) {
+    if (!enemySprite || !enemySprite.active) return;
+    this.emitter.explode(10, enemySprite.x, enemySprite.y);
+    this.cameras.main.shake(30, 0.003);
+    if (synth) synth.playExplosion();
   }
 
   hitEnemy(
@@ -388,18 +436,16 @@ class MainScene extends Phaser.Scene {
     const hp = enemySprite.getData('hp') - 1;
     enemySprite.setData('hp', hp);
     if (hp <= 0) {
-      this.emitter.explode(10, enemySprite.x, enemySprite.y);
+      this.broadcastEffect('explosion', enemySprite.x, enemySprite.y);
       enemySprite.destroy();
       this.score += enemySprite.getData('type') === 'big' ? 50 : 10;
       this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
-      if (synth && isHost) synth.playExplosion();
     } else {
       enemySprite.setTint(0xffffff);
       this.time.delayedCall(50, () => {
         if (enemySprite && enemySprite.active) enemySprite.clearTint();
       });
     }
-    this.cameras.main.shake(30, 0.003);
   }
 
   respawnPlayer(player: Phaser.Physics.Arcade.Sprite) {
@@ -424,8 +470,7 @@ class MainScene extends Phaser.Scene {
     player.setVelocity(0, 0);
     player.body.enable = false;
     player.setVisible(false);
-    this.emitter.explode(30, player.x, player.y);
-    if (synth) synth.playDeath();
+    this.broadcastEffect('death', player.x, player.y);
 
     this.time.delayedCall(5000, () => {
       if (!player || !player.active) return;
@@ -518,6 +563,7 @@ class MainScene extends Phaser.Scene {
       if (!nextEnemySprites[id]) {
         const sprite = this.enemySprites[id];
         if (sprite) {
+          this.showEnemyImpact(sprite);
           sprite.destroy();
         }
         delete this.enemySprites[id];
@@ -633,6 +679,7 @@ class MainScene extends Phaser.Scene {
 
   receiveState(data: PeerSnapshotMessage) {
     if (isHost || !data || data.type !== 'state') return;
+    this.score = data.score;
     this.scoreText.setText('SCORE: ' + data.score + ' | ROLE: CLIENT');
 
     this.syncEnemySprites(data.enemies || []);
@@ -679,6 +726,11 @@ class MainScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  receiveEffect(data: PeerEffectMessage) {
+    if (isHost || !data || data.type !== 'effect') return;
+    this.applyEffect(data.effect, data.x, data.y);
   }
 
   resize(gameSize: Phaser.Structs.Size) {
@@ -744,6 +796,7 @@ class MainScene extends Phaser.Scene {
               bullet.body.velocity as Phaser.Math.Vector2
             );
             bullet.rotation = aimAngle;
+            this.broadcastEffect('shot');
           }
           this.lastFired = time + this.fireRate;
         }
@@ -766,7 +819,6 @@ class MainScene extends Phaser.Scene {
         let mx = rp.getData('moveX') || 0;
         let my = rp.getData('moveY') || 0;
         rp.setVelocity(mx * speed, my * speed);
-        if (synth) synth.playShot();
 
         if (mx !== 0 || my !== 0) rp.rotation = Math.atan2(my, mx);
 
@@ -785,7 +837,7 @@ class MainScene extends Phaser.Scene {
               bul.body.velocity as Phaser.Math.Vector2
             );
             bul.rotation = angle;
-            if (synth) synth.playShot();
+            this.broadcastEffect('shot');
           }
           rp.setData('lastFired', time + this.fireRate);
         }
@@ -890,6 +942,8 @@ function selectSector(sector: string) {
     conn.on('data', (data: PeerMessage) => {
       if (data.type === 'input' && gameScene && gameScene.handleRemoteInput) {
         gameScene.handleRemoteInput(conn.peer, data);
+      } else if (data.type === 'effect' && gameScene && gameScene.receiveEffect) {
+        gameScene.receiveEffect(data);
       }
     });
     conn.on('close', () => {
@@ -956,6 +1010,8 @@ function joinSector(targetPeerId: string, sector: string) {
     conn.on('data', (data: PeerMessage) => {
       if (data.type === 'state' && gameScene && gameScene.receiveState) {
         gameScene.receiveState(data);
+      } else if (data.type === 'effect' && gameScene && gameScene.receiveEffect) {
+        gameScene.receiveEffect(data);
       }
     });
 
