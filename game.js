@@ -614,6 +614,7 @@ class MainScene extends Phaser.Scene {
 
         // Host: update remote players and enemy AI
         if (isHost) {
+            const speed = 350;
             // Move remote players according to their last input
             for (let id in this.remotePlayers) {
                 let rp = this.remotePlayers[id];
