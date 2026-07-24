@@ -1,83 +1,8 @@
-// @ts-nocheck
 /// <reference types="vite/client" />
 
 import Phaser from 'phaser';
-import Peer from 'peerjs';
-
-class Synth {
-  constructor() {
-    this.ctx = null;
-    this.master = null;
-    this.unlocked = false;
-  }
-
-  init() {
-    if (this.ctx) return;
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      this.ctx = new AC();
-      this.master = this.ctx.createGain();
-      this.master.gain.value = 0.18;
-      this.master.connect(this.ctx.destination);
-    } catch (e) {
-      console.warn('AudioContext unavailable', e);
-      this.ctx = null;
-    }
-  }
-
-  unlock() {
-    this.init();
-    if (!this.ctx) return;
-    if (this.ctx.state === 'suspended') {
-      this.ctx
-        .resume()
-        .then(() => {
-          this.unlocked = true;
-        })
-        .catch(() => {});
-    } else {
-      this.unlocked = true;
-    }
-  }
-
-  playOsc(type: OscillatorType, freq: number, duration = 0.12, gain = 0.12) {
-    if (!this.ctx || !this.unlocked) return;
-    const now = this.ctx.currentTime;
-    const o = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(freq, now);
-    g.gain.setValueAtTime(gain, now);
-    g.gain.exponentialRampToValueAtTime(0.001, now + duration);
-    o.connect(g);
-    g.connect(this.master!);
-    o.start(now);
-    o.stop(now + duration + 0.02);
-  }
-
-  playShot() {
-    this.playOsc('sawtooth', 880, 0.08, 0.08);
-  }
-  playHit() {
-    this.playOsc('square', 420, 0.1, 0.1);
-  }
-  playExplosion() {
-    this.playOsc('sawtooth', 160, 0.28, 0.22);
-    this.playOsc('sine', 260, 0.18, 0.1);
-  }
-  playBigSpawn() {
-    this.playOsc('triangle', 220, 0.36, 0.18);
-  }
-  playDeath() {
-    this.playOsc('sawtooth', 120, 0.6, 0.24);
-  }
-  playTick() {
-    this.playOsc('square', 1200, 0.06, 0.06);
-  }
-  playGo() {
-    this.playOsc('sawtooth', 1400, 0.18, 0.12);
-  }
-}
+import Peer, { DataConnection, PeerError } from 'peerjs';
+import { Synth } from './Synth';
 
 class MainScene extends Phaser.Scene {
   private score = 0;
@@ -119,48 +44,48 @@ class MainScene extends Phaser.Scene {
   }
 
   preload() {
-    const playerGraphics = this.make.graphics({ add: false });
+    const playerGraphics = this.make.graphics({});
     playerGraphics.fillStyle(0x00ffff, 1);
     playerGraphics.fillTriangle(30, 15, 0, 30, 0, 0);
     playerGraphics.generateTexture('player', 30, 30);
 
-    const guestGraphics = this.make.graphics({ add: false });
+    const guestGraphics = this.make.graphics({});
     guestGraphics.fillStyle(0x00ff88, 1);
     guestGraphics.fillTriangle(30, 15, 0, 30, 0, 0);
     guestGraphics.generateTexture('guest', 30, 30);
 
-    const enemyGraphics = this.make.graphics({ add: false });
+    const enemyGraphics = this.make.graphics({});
     enemyGraphics.lineStyle(3, 0xff00ff);
     enemyGraphics.strokeRect(2, 2, 26, 26);
     enemyGraphics.fillStyle(0x330033, 1);
     enemyGraphics.fillRect(2, 2, 26, 26);
     enemyGraphics.generateTexture('enemy', 30, 30);
 
-    const bigEnemyGraphics = this.make.graphics({ add: false });
+    const bigEnemyGraphics = this.make.graphics({});
     bigEnemyGraphics.lineStyle(4, 0xff8800);
     bigEnemyGraphics.strokeCircle(25, 25, 23);
     bigEnemyGraphics.fillStyle(0x442200, 1);
     bigEnemyGraphics.fillCircle(25, 25, 23);
     bigEnemyGraphics.generateTexture('bigenemy', 50, 50);
 
-    const bulletGraphics = this.make.graphics({ add: false });
+    const bulletGraphics = this.make.graphics({});
     bulletGraphics.fillStyle(0xffff00, 1);
     bulletGraphics.fillCircle(8, 8, 8);
     bulletGraphics.generateTexture('bullet', 16, 16);
 
-    const gridGraphics = this.make.graphics({ add: false });
+    const gridGraphics = this.make.graphics({});
     gridGraphics.lineStyle(1, 0x003333, 0.5);
     gridGraphics.strokeRect(0, 0, 100, 100);
     gridGraphics.generateTexture('grid', 100, 100);
 
-    const particleGraphics = this.make.graphics({ add: false });
+    const particleGraphics = this.make.graphics({});
     particleGraphics.fillStyle(0x00ffff, 1);
     particleGraphics.fillRect(0, 0, 4, 4);
     particleGraphics.generateTexture('particle', 4, 4);
   }
 
   create() {
-    window.gameScene = this;
+    gameScene = this;
 
     this.physics.world.setBounds(0, 0, 2000, 2000);
     this.cameras.main.setBounds(0, 0, 2000, 2000);
@@ -192,7 +117,6 @@ class MainScene extends Phaser.Scene {
     this.scoreText = this.add
       .text(20, 20, 'SCORE: 0 | ROLE: ' + (isHost ? 'HOST (' + roomCode + ')' : 'CLIENT'), {
         fontSize: '20px',
-        fill: '#00ffff',
         fontFamily: 'Courier',
         fontStyle: 'bold',
       })
@@ -202,7 +126,6 @@ class MainScene extends Phaser.Scene {
     this.pauseText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, 'GAME PAUSED', {
         fontSize: '48px',
-        fill: '#ffff00',
         align: 'center',
         fontFamily: 'Courier',
         fontStyle: 'bold',
@@ -215,7 +138,6 @@ class MainScene extends Phaser.Scene {
     this.gameOverText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, 'GAME OVER\nTap to Restart', {
         fontSize: '48px',
-        fill: '#ff00ff',
         align: 'center',
         fontFamily: 'Courier',
         fontStyle: 'bold',
@@ -226,7 +148,7 @@ class MainScene extends Phaser.Scene {
       .setDepth(300);
 
     this.input.once('pointerdown', () => {
-      if (window.synth) window.synth.unlock();
+      if (synth) synth.unlock();
     });
 
     this.input.addPointer(2);
@@ -389,7 +311,7 @@ class MainScene extends Phaser.Scene {
       enemy.setData('hp', 1);
       enemy.setBounce(1);
       enemy.setCollideWorldBounds(true);
-      if (window.synth && isHost) window.synth.playHit();
+      if (synth && isHost) synth.playHit();
     }
   }
 
@@ -406,11 +328,11 @@ class MainScene extends Phaser.Scene {
       enemy.setData('hp', 5);
       enemy.setBounce(1);
       enemy.setCollideWorldBounds(true);
-      if (window.synth && isHost) window.synth.playBigSpawn();
+      if (synth && isHost) synth.playBigSpawn();
     }
   }
 
-  hitEnemy(bullet: Phaser.GameObjects.GameObject, enemy: Phaser.GameObjects.GameObject) {
+  hitEnemy(bullet: Phaser.GameObjects.GameObject, enemy: Phaser.GameObjects.Sprite) {
     bullet.destroy();
     const hp = enemy.getData('hp') - 1;
     enemy.setData('hp', hp);
@@ -419,7 +341,7 @@ class MainScene extends Phaser.Scene {
       enemy.destroy();
       this.score += enemy.getData('type') === 'big' ? 50 : 10;
       this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
-      if (window.synth && isHost) window.synth.playExplosion();
+      if (synth && isHost) synth.playExplosion();
     } else {
       enemy.setTint(0xffffff);
       this.time.delayedCall(50, () => {
@@ -452,7 +374,7 @@ class MainScene extends Phaser.Scene {
     player.body.enable = false;
     player.setVisible(false);
     this.emitter.explode(30, player.x, player.y);
-    if (window.synth) window.synth.playDeath();
+    if (synth) synth.playDeath();
 
     this.time.delayedCall(5000, () => {
       if (!player || !player.active) return;
@@ -520,7 +442,7 @@ class MainScene extends Phaser.Scene {
       type: 'state',
       score: this.score,
       players,
-      enemies: this.enemies.getChildren().map((e: Phaser.GameObjects.GameObject) => ({
+      enemies: this.enemies.getChildren().map((e: Phaser.GameObjects.Sprite) => ({
         x: e.x,
         y: e.y,
         type: e.getData('type'),
@@ -528,7 +450,7 @@ class MainScene extends Phaser.Scene {
       })),
       bullets: this.bullets
         .getChildren()
-        .map((b: Phaser.GameObjects.GameObject) => ({ x: b.x, y: b.y })),
+        .map((b: Phaser.GameObjects.Sprite) => ({ x: b.x, y: b.y })),
     };
 
     connections.forEach((conn) => conn.send(state));
@@ -692,8 +614,8 @@ class MainScene extends Phaser.Scene {
             bullet.rotation = aimAngle;
             bullet.setData('born', 0);
             bullet.update = function (t: number, d: number) {
-              const born = (this as any).getData('born') + d;
-              (this as any).setData('born', born);
+              const born = (this as Phaser.GameObjects.Sprite).getData('born') + d;
+              (this as Phaser.GameObjects.Sprite).setData('born', born);
               if (born > 1500) this.destroy();
             };
           }
@@ -718,31 +640,31 @@ class MainScene extends Phaser.Scene {
         let mx = rp.getData('moveX') || 0;
         let my = rp.getData('moveY') || 0;
         rp.setVelocity(mx * speed, my * speed);
-        if (window.synth) window.synth.playShot();
+        if (synth) synth.playShot();
 
         if (mx !== 0 || my !== 0) rp.rotation = Math.atan2(my, mx);
 
         if (rp.getData('shoot') && time > rp.getData('lastFired')) {
           const angle = rp.getData('aimAngle') || 0;
-          const bul = this.bullets.create(rp.x, rp.y, 'bullet');
+          const bul: Phaser.GameObjects.Sprite | null = this.bullets.create(rp.x, rp.y, 'bullet');
           if (bul) {
             bul.setActive(true).setVisible(true);
             this.physics.velocityFromRotation(angle, 1000, bul.body.velocity);
             bul.rotation = angle;
             bul.setData('born', 0);
             bul.update = function (t: number, d: number) {
-              const born = (this as any).getData('born') + d;
-              (this as any).setData('born', born);
+              const born = (this as Phaser.GameObjects.Sprite).getData('born') + d;
+              (this as Phaser.GameObjects.Sprite).setData('born', born);
               if (born > 1500) this.destroy();
             };
-            if (window.synth) window.synth.playShot();
+            if (synth) synth.playShot();
           }
           rp.setData('lastFired', time + this.fireRate);
         }
       }
 
       const alivePlayers = this.getAlivePlayers();
-      this.enemies.getChildren().forEach((enemy: Phaser.GameObjects.GameObject) => {
+      this.enemies.getChildren().forEach((enemy: Phaser.GameObjects.Sprite) => {
         if (!enemy.active) return;
 
         let target: Phaser.Physics.Arcade.Sprite | null = null;
@@ -777,12 +699,13 @@ class MainScene extends Phaser.Scene {
 
 let isHost = false;
 let roomCode: string | null = null;
-let hostConnection: any = null;
+let hostConnection: DataConnection | null = null;
 let clientPeer: Peer | null = null;
 let hostPeer: Peer | null = null;
-let connections: any[] = [];
+let connections: DataConnection[] = [];
+let gameScene: MainScene | null = null;
 
-const synth = (window.synth = window.synth || new Synth());
+const synth: Synth | null = new Synth();
 const sectorButtons = Array.from(document.querySelectorAll<HTMLElement>('.sector-btn'));
 const statusText = document.getElementById('lobby-status');
 
@@ -797,7 +720,7 @@ sectorButtons.forEach((button) => {
 function selectSector(sector: string) {
   const targetPeerId = `neon-sector-${sector}`;
 
-  sectorButtons.forEach((button) => {
+  sectorButtons.forEach((button: HTMLButtonElement) => {
     button.disabled = true;
   });
   if (statusText) {
@@ -827,29 +750,29 @@ function selectSector(sector: string) {
     startGameAsHost();
   });
 
-  hostPeer.on('connection', (conn: any) => {
+  hostPeer.on('connection', (conn: DataConnection) => {
     connections.push(conn);
     conn.on('open', () => {
       console.log('Client connected:', conn.peer);
     });
     conn.on('data', (data: any) => {
-      if (window.gameScene && (window.gameScene as any).handleRemoteInput) {
-        (window.gameScene as any).handleRemoteInput(conn.peer, data);
+      if (gameScene && gameScene.handleRemoteInput) {
+        gameScene.handleRemoteInput(conn.peer, data);
       }
     });
     conn.on('close', () => {
       const idx = connections.indexOf(conn);
       if (idx > -1) connections.splice(idx, 1);
-      if (window.gameScene && (window.gameScene as any).removeRemotePlayer) {
-        (window.gameScene as any).removeRemotePlayer(conn.peer);
+      if (gameScene && gameScene.removeRemotePlayer) {
+        gameScene.removeRemotePlayer(conn.peer);
       }
     });
-    conn.on('error', (err: any) => {
+    conn.on('error', (err: unknown) => {
       console.warn('Connection error:', err);
     });
   });
 
-  hostPeer.on('error', (err: any) => {
+  hostPeer.on('error', (err: Error & { type?: string }) => {
     const message = (err && (err.message || err.type)) || '';
     const isUnavailableId =
       err &&
@@ -873,7 +796,7 @@ function selectSector(sector: string) {
     if (statusText) {
       statusText.innerText = `Peer error: ${message || 'Unknown error'}`;
     }
-    sectorButtons.forEach((button) => {
+    sectorButtons.forEach((button: HTMLButtonElement) => {
       button.disabled = false;
     });
   });
@@ -899,8 +822,8 @@ function joinSector(targetPeerId: string, sector: string) {
     });
 
     conn.on('data', (data) => {
-      if (window.gameScene && window.gameScene.receiveState) {
-        window.gameScene.receiveState(data);
+      if (gameScene && gameScene.receiveState) {
+        gameScene.receiveState(data);
       }
     });
 
@@ -908,26 +831,26 @@ function joinSector(targetPeerId: string, sector: string) {
       if (statusText) {
         statusText.innerText = `Connection to sector ${sector} was lost.`;
       }
-      sectorButtons.forEach((button) => {
+      sectorButtons.forEach((button: HTMLButtonElement) => {
         button.disabled = false;
       });
     });
 
-    conn.on('error', (err: any) => {
+    conn.on('error', (err: Error) => {
       if (statusText) {
         statusText.innerText = `Connection error: ${err.message || 'Unable to join sector'}`;
       }
-      sectorButtons.forEach((button) => {
+      sectorButtons.forEach((button: HTMLButtonElement) => {
         button.disabled = false;
       });
     });
   });
 
-  clientPeer.on('error', (err: any) => {
+  clientPeer.on('error', (err: Error) => {
     if (statusText) {
       statusText.innerText = `Peer error: ${err.message || 'Unable to create client peer'}`;
     }
-    sectorButtons.forEach((button) => {
+    sectorButtons.forEach((button: HTMLButtonElement) => {
       button.disabled = false;
     });
   });
@@ -941,7 +864,7 @@ function startGameAsHost() {
   const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
     scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container', width: '100%', height: '100%' },
-    physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
+    physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
     scene: MainScene,
   };
   new Phaser.Game(config);
@@ -955,10 +878,8 @@ function startGameAsClient(conn: DataConnection) {
   const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
     scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container', width: '100%', height: '100%' },
-    physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
+    physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
     scene: MainScene,
   };
   new Phaser.Game(config);
 }
-
-window.synth = synth;
