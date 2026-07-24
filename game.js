@@ -7,36 +7,53 @@ let hostPeer = null;          // host's Peer instance
 let connections = [];         // host side: array of active DataConnections
 
 // DOM Elements
-const btnHost = document.getElementById('btn-host');
-const btnJoin = document.getElementById('btn-join');
-const inputHostId = document.getElementById('input-host-id');
+const sectorButtons = Array.from(document.querySelectorAll('.sector-btn'));
 const statusText = document.getElementById('lobby-status');
 
 // ---------- Lobby Events ----------
-btnHost.addEventListener('click', () => {
-    isHost = true;
-    btnHost.disabled = true;
-    btnJoin.disabled = true;
-    statusText.innerText = 'Creating peer...';
+sectorButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+        const sector = button.getAttribute('data-sector');
+        if (!sector) return;
+        selectSector(sector);
+    });
+});
 
-    // Create host peer (default PeerJS cloud server)
-    hostPeer = new Peer('neon');
+function selectSector(sector) {
+    const targetPeerId = `neon-sector-${sector}`;
 
-    hostPeer.on('open', (id) => {
-        roomCode = id;
-        statusText.innerText = `Your Host ID: ${id}\nShare this code with friends.`;
+    sectorButtons.forEach((button) => {
+        button.disabled = true;
+    });
+    statusText.innerText = `Preparing sector ${sector}...`;
+
+    roomCode = targetPeerId;
+    isHost = false;
+    hostConnection = null;
+
+    if (hostPeer) {
+        hostPeer.destroy();
+        hostPeer = null;
+    }
+    if (clientPeer) {
+        clientPeer.destroy();
+        clientPeer = null;
+    }
+
+    hostPeer = new Peer(targetPeerId);
+
+    hostPeer.on('open', () => {
+        isHost = true;
+        statusText.innerText = `Sector ${sector} host ready. Peer ID: ${targetPeerId}`;
         startGameAsHost();
     });
 
     hostPeer.on('connection', (conn) => {
-        // A client is connecting
         connections.push(conn);
         conn.on('open', () => {
             console.log('Client connected:', conn.peer);
-            // Send initial state if game is running
         });
         conn.on('data', (data) => {
-            // Forward input to the game scene
             if (window.gameScene && window.gameScene.handleRemoteInput) {
                 window.gameScene.handleRemoteInput(conn.peer, data);
             }
@@ -54,55 +71,74 @@ btnHost.addEventListener('click', () => {
     });
 
     hostPeer.on('error', (err) => {
-        statusText.innerText = 'Peer error: ' + err.message;
+        const message = (err && (err.message || err.type)) || '';
+        const isUnavailableId = err && (
+            err.type === 'unavailable-id' ||
+            err.type === 'peer-unavailable' ||
+            message.toLowerCase().includes('unavailable') ||
+            message.toLowerCase().includes('taken')
+        );
+
+        if (isUnavailableId) {
+            if (hostPeer) {
+                hostPeer.destroy();
+                hostPeer = null;
+            }
+            statusText.innerText = `Sector ${sector} is already live. Joining...`;
+            joinSector(targetPeerId, sector);
+            return;
+        }
+
+        statusText.innerText = `Peer error: ${message || 'Unknown error'}`;
+        sectorButtons.forEach((button) => {
+            button.disabled = false;
+        });
     });
-});
+}
 
-btnJoin.addEventListener('click', () => {
-    const targetId = inputHostId.value.trim();
-    if (!targetId) {
-        statusText.innerText = 'Please enter a valid Host Peer ID.';
-        return;
-    }
+function joinSector(targetPeerId, sector) {
     isHost = false;
-    roomCode = targetId;
-    btnHost.disabled = true;
-    btnJoin.disabled = true;
-    statusText.innerText = `Connecting to host ${targetId}...`;
-
-    // Create client peer
+    roomCode = targetPeerId;
     clientPeer = new Peer();
 
-    clientPeer.on('open', (id) => {
-        // Connect to host
-        const conn = clientPeer.connect(targetId, { reliable: true });
+    clientPeer.on('open', () => {
+        statusText.innerText = `Connecting to sector ${sector}...`;
+        const conn = clientPeer.connect(targetPeerId, { reliable: true });
         hostConnection = conn;
 
         conn.on('open', () => {
-            statusText.innerText = 'Connected! Starting game...';
+            statusText.innerText = `Connected to sector ${sector}. Starting game...`;
             startGameAsClient(conn);
         });
 
         conn.on('data', (data) => {
-            // Receive game state snapshot
             if (window.gameScene && window.gameScene.receiveState) {
                 window.gameScene.receiveState(data);
             }
         });
 
         conn.on('close', () => {
-            statusText.innerText = 'Connection lost.';
+            statusText.innerText = `Connection to sector ${sector} was lost.`;
+            sectorButtons.forEach((button) => {
+                button.disabled = false;
+            });
         });
 
         conn.on('error', (err) => {
-            statusText.innerText = 'Connection error: ' + err.message;
+            statusText.innerText = `Connection error: ${err.message || 'Unable to join sector'}`;
+            sectorButtons.forEach((button) => {
+                button.disabled = false;
+            });
         });
     });
 
     clientPeer.on('error', (err) => {
-        statusText.innerText = 'Peer error: ' + err.message;
+        statusText.innerText = `Peer error: ${err.message || 'Unable to create client peer'}`;
+        sectorButtons.forEach((button) => {
+            button.disabled = false;
+        });
     });
-});
+}
 
 // ---------- Game Scene ----------
 class MainScene extends Phaser.Scene {

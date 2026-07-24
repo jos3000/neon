@@ -82,23 +82,18 @@
             box-shadow: 0 0 15px #ff00ff;
         }
 
-        input {
-            background: #111;
-            border: 2px solid #ff00ff;
-            color: #fff;
-            padding: 12px;
-            font-size: 16px;
-            border-radius: 5px;
-            width: 100%;
-            box-sizing: border-box;
-            margin-bottom: 15px;
-            text-align: center;
+        button:disabled {
+            opacity: 0.6;
+            cursor: wait;
         }
 
-        input:focus {
-            outline: none;
-            border-color: #00ffff;
-            box-shadow: 0 0 10px #00ffff;
+        .sector-buttons {
+            display: grid;
+            gap: 10px;
+        }
+
+        .sector-btn {
+            margin: 0;
         }
 
         .status-text {
@@ -119,11 +114,13 @@
         <h1>NEON SURVIVORS</h1>
         <p>Twin-Stick Co-op Multiplayer</p>
         <div class="lobby-box">
-            <button id="btn-host">HOST NEW GAME</button>
-            <hr style="border-color: #00ffff33; margin: 15px 0;" />
-            <input type="text" id="input-host-id" placeholder="Enter Host Peer ID to Join" />
-            <button id="btn-join">JOIN GAME</button>
-            <div id="lobby-status" class="status-text">Ready. Host or join using a Peer ID.</div>
+            <p>Select a sector to host or join.</p>
+            <div class="sector-buttons">
+                <button class="sector-btn" data-sector="0">SECTOR 0</button>
+                <button class="sector-btn" data-sector="1">SECTOR 1</button>
+                <button class="sector-btn" data-sector="2">SECTOR 2</button>
+            </div>
+            <div id="lobby-status" class="status-text">Choose a sector to host or join.</div>
         </div>
     </div>
 
