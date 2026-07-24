@@ -355,13 +355,53 @@ class MainScene extends Phaser.Scene {
         this.cameras.main.shake(30, 0.003);
     }
 
+    respawnPlayer(player) {
+        if (!player || !player.active) return;
+
+        const spawnX = 1000 + Phaser.Math.Between(-200, 200);
+        const spawnY = 1000 + Phaser.Math.Between(-200, 200);
+
+        player.setData('isDead', false);
+        player.clearTint();
+        player.setVisible(true);
+        player.body.enable = true;
+        player.body.reset(spawnX, spawnY);
+        player.setVelocity(0, 0);
+    }
+
+    handlePlayerDeath(player) {
+        if (!player || !player.active || player.getData('isDead')) return;
+
+        player.setData('isDead', true);
+        player.setTint(0xff0000);
+        player.setVelocity(0, 0);
+        player.body.enable = false;
+        player.setVisible(false);
+        this.emitter.explode(30, player.x, player.y);
+
+        this.time.delayedCall(5000, () => {
+            if (!player || !player.active) return;
+            this.respawnPlayer(player);
+        });
+    }
+
     hitPlayer(player, enemy) {
         if (this.gameOver) return;
-        this.physics.pause();
-        this.gameOver = true;
-        player.setTint(0xff0000);
-        this.emitter.explode(30, player.x, player.y);
-        this.gameOverText.setVisible(true);
+        this.handlePlayerDeath(player);
+    }
+
+    getAlivePlayers() {
+        const alivePlayers = [];
+        if (this.player && this.player.active && !this.player.getData('isDead')) {
+            alivePlayers.push(this.player);
+        }
+        for (let id in this.remotePlayers) {
+            const rp = this.remotePlayers[id];
+            if (rp && rp.active && !rp.getData('isDead')) {
+                alivePlayers.push(rp);
+            }
+        }
+        return alivePlayers;
     }
 
     // --- Networking: Host side ---
@@ -519,53 +559,57 @@ class MainScene extends Phaser.Scene {
 
         // Movement (local player)
         let moveX = 0, moveY = 0;
-        if (this.leftVector) {
-            moveX = this.leftVector.x;
-            moveY = this.leftVector.y;
-        } else {
-            if (this.cursors.left.isDown || this.wasd.A.isDown) moveX = -1;
-            if (this.cursors.right.isDown || this.wasd.D.isDown) moveX = 1;
-            if (this.cursors.up.isDown || this.wasd.W.isDown) moveY = -1;
-            if (this.cursors.down.isDown || this.wasd.S.isDown) moveY = 1;
-            if (moveX !== 0 && moveY !== 0) {
-                let len = Math.sqrt(moveX*moveX + moveY*moveY);
-                moveX /= len; moveY /= len;
-            }
-        }
-
-        const speed = 350;
-        this.player.setVelocity(moveX * speed, moveY * speed);
-
-        // Aiming & Shooting (local)
-        let isShooting = false;
-        let aimAngle = 0;
-        if (this.rightVector && this.rightVector.force > 0.2) {
-            isShooting = true;
-            aimAngle = this.rightVector.angle;
-        } else if (this.input.activePointer.isDown && !this.leftPointer && !this.rightPointer) {
-            isShooting = true;
-            aimAngle = Phaser.Math.Angle.Between(this.player.x, this.player.y,
-                this.input.activePointer.worldX, this.input.activePointer.worldY);
-        }
-
-        if (isShooting) {
-            this.player.rotation = aimAngle;
-            if (time > this.lastFired) {
-                let bullet = this.bullets.create(this.player.x, this.player.y, 'bullet');
-                if (bullet) {
-                    bullet.setActive(true).setVisible(true);
-                    this.physics.velocityFromRotation(aimAngle, 1000, bullet.body.velocity);
-                    bullet.rotation = aimAngle;
-                    bullet.born = 0;
-                    bullet.update = function(t, d) {
-                        this.born += d;
-                        if (this.born > 1500) this.destroy();
-                    };
+        if (!this.player.getData('isDead')) {
+            if (this.leftVector) {
+                moveX = this.leftVector.x;
+                moveY = this.leftVector.y;
+            } else {
+                if (this.cursors.left.isDown || this.wasd.A.isDown) moveX = -1;
+                if (this.cursors.right.isDown || this.wasd.D.isDown) moveX = 1;
+                if (this.cursors.up.isDown || this.wasd.W.isDown) moveY = -1;
+                if (this.cursors.down.isDown || this.wasd.S.isDown) moveY = 1;
+                if (moveX !== 0 && moveY !== 0) {
+                    let len = Math.sqrt(moveX*moveX + moveY*moveY);
+                    moveX /= len; moveY /= len;
                 }
-                this.lastFired = time + this.fireRate;
             }
-        } else if (moveX !== 0 || moveY !== 0) {
-            this.player.rotation = Math.atan2(moveY, moveX);
+
+            const speed = 350;
+            this.player.setVelocity(moveX * speed, moveY * speed);
+
+            // Aiming & Shooting (local)
+            let isShooting = false;
+            let aimAngle = 0;
+            if (this.rightVector && this.rightVector.force > 0.2) {
+                isShooting = true;
+                aimAngle = this.rightVector.angle;
+            } else if (this.input.activePointer.isDown && !this.leftPointer && !this.rightPointer) {
+                isShooting = true;
+                aimAngle = Phaser.Math.Angle.Between(this.player.x, this.player.y,
+                    this.input.activePointer.worldX, this.input.activePointer.worldY);
+            }
+
+            if (isShooting) {
+                this.player.rotation = aimAngle;
+                if (time > this.lastFired) {
+                    let bullet = this.bullets.create(this.player.x, this.player.y, 'bullet');
+                    if (bullet) {
+                        bullet.setActive(true).setVisible(true);
+                        this.physics.velocityFromRotation(aimAngle, 1000, bullet.body.velocity);
+                        bullet.rotation = aimAngle;
+                        bullet.born = 0;
+                        bullet.update = function(t, d) {
+                            this.born += d;
+                            if (this.born > 1500) this.destroy();
+                        };
+                    }
+                    this.lastFired = time + this.fireRate;
+                }
+            } else if (moveX !== 0 || moveY !== 0) {
+                this.player.rotation = Math.atan2(moveY, moveX);
+            }
+        } else {
+            this.player.setVelocity(0, 0);
         }
 
         // Host: update remote players and enemy AI
@@ -573,6 +617,11 @@ class MainScene extends Phaser.Scene {
             // Move remote players according to their last input
             for (let id in this.remotePlayers) {
                 let rp = this.remotePlayers[id];
+                if (rp.getData('isDead')) {
+                    rp.setVelocity(0, 0);
+                    continue;
+                }
+
                 let mx = rp.getData('moveX') || 0;
                 let my = rp.getData('moveY') || 0;
                 rp.setVelocity(mx * speed, my * speed);
@@ -598,16 +647,32 @@ class MainScene extends Phaser.Scene {
             }
 
             // Enemy AI
+            const alivePlayers = this.getAlivePlayers();
             this.enemies.getChildren().forEach(enemy => {
-                if (enemy.active) {
-                    // track nearest player (host or remote)
-                    let target = this.player;
-                    let minDist = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
-                    for (let id in this.remotePlayers) {
-                        let rp = this.remotePlayers[id];
-                        let d = Phaser.Math.Distance.Between(enemy.x, enemy.y, rp.x, rp.y);
-                        if (d < minDist) { target = rp; minDist = d; }
+                if (!enemy.active) return;
+
+                let target = null;
+                let minDist = Infinity;
+                alivePlayers.forEach(player => {
+                    if (!player || !player.active) return;
+                    const d = Phaser.Math.Distance.Between(enemy.x, enemy.y, player.x, player.y);
+                    if (d < minDist) {
+                        minDist = d;
+                        target = player;
                     }
+                });
+
+                if (!target || minDist > 600) {
+                    let wanderDirection = enemy.getData('wanderDirection') || 0;
+                    let nextTurnAt = enemy.getData('nextTurnAt') || 0;
+                    if (time > nextTurnAt) {
+                        wanderDirection = Phaser.Math.FloatBetween(0, Math.PI * 2);
+                        enemy.setData('wanderDirection', wanderDirection);
+                        enemy.setData('nextTurnAt', time + 800);
+                    }
+                    this.physics.velocityFromRotation(wanderDirection, 80, enemy.body.velocity);
+                    enemy.rotation = wanderDirection;
+                } else {
                     this.physics.moveToObject(enemy, target, 150);
                     enemy.rotation += 0.05;
                 }
