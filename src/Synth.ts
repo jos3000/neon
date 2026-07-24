@@ -78,4 +78,8 @@ export class Synth {
   playGo() {
     this.playOsc('sawtooth', 1400, 0.18, 0.12);
   }
+  playLaser() {
+    this.playOsc('sawtooth', 700, 0.25, 0.2);
+    this.playOsc('sine', 1100, 0.25, 0.15);
+  }
 }

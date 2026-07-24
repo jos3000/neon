@@ -17,6 +17,8 @@ type EnemySnapshot = {
   y: number;
   type: string;
   r: number;
+  laserState?: 'idle' | 'charging' | 'firing';
+  laserAngle?: number;
 };
 
 type BulletSnapshot = {
@@ -43,7 +45,7 @@ type PeerInputMessage = {
 
 type PeerEffectMessage = {
   type: 'effect';
-  effect: 'explosion' | 'hit' | 'spawn' | 'big-spawn' | 'death' | 'shot';
+  effect: 'explosion' | 'hit' | 'spawn' | 'big-spawn' | 'death' | 'shot' | 'laser';
   x?: number;
   y?: number;
 };
@@ -89,6 +91,7 @@ class MainScene extends Phaser.Scene {
   private baseCenter = { x: 1000, y: 1600 };
   private baseRadius = 180;
   private baseGraphics!: Phaser.GameObjects.Graphics;
+  private laserGraphics!: Phaser.GameObjects.Graphics;
   private spawnTimer?: Phaser.Time.TimerEvent;
   private bigSpawnTimer?: Phaser.Time.TimerEvent;
   private broadcastTimer?: Phaser.Time.TimerEvent;
@@ -132,6 +135,21 @@ class MainScene extends Phaser.Scene {
     spawnerGraphics.fillRect(20, 20, 20, 20);
     spawnerGraphics.generateTexture('spawner', 60, 60);
 
+    const laserEnemyGraphics = this.make.graphics({});
+    laserEnemyGraphics.lineStyle(3, 0xff0044);
+    laserEnemyGraphics.fillStyle(0x440011, 1);
+    laserEnemyGraphics.beginPath();
+    laserEnemyGraphics.moveTo(20, 2);
+    laserEnemyGraphics.lineTo(38, 20);
+    laserEnemyGraphics.lineTo(20, 38);
+    laserEnemyGraphics.lineTo(2, 20);
+    laserEnemyGraphics.closePath();
+    laserEnemyGraphics.fillPath();
+    laserEnemyGraphics.strokePath();
+    laserEnemyGraphics.fillStyle(0xff0044, 1);
+    laserEnemyGraphics.fillCircle(20, 20, 7);
+    laserEnemyGraphics.generateTexture('laserenemy', 40, 40);
+
     const bulletGraphics = this.make.graphics({});
     bulletGraphics.fillStyle(0xffff00, 1);
     bulletGraphics.fillCircle(8, 8, 8);
@@ -161,6 +179,8 @@ class MainScene extends Phaser.Scene {
     this.baseGraphics.strokeCircle(this.baseCenter.x, this.baseCenter.y, this.baseRadius);
     this.baseGraphics.fillCircle(this.baseCenter.x, this.baseCenter.y, this.baseRadius);
     this.baseGraphics.setDepth(40);
+
+    this.laserGraphics = this.add.graphics().setDepth(5);
 
     this.gameOver = false;
     this.isPaused = false;
@@ -543,16 +563,30 @@ class MainScene extends Phaser.Scene {
       const spawnY = Phaser.Math.Clamp(spawner.y + Math.sin(angle) * 45, 40, 1960);
       if (this.isInBaseArea(spawnX, spawnY)) return;
 
-      const isBig = Math.random() < 0.25;
+      const rand = Math.random();
+      let enemyType = 'normal';
+      let texture = 'enemy';
+      let hp = 1;
+      if (rand < 0.25) {
+        enemyType = 'big';
+        texture = 'bigenemy';
+        hp = 5;
+      } else if (rand < 0.5) {
+        enemyType = 'laser';
+        texture = 'laserenemy';
+        hp = 3;
+      }
+
       const enemyId = `enemy-${++this.nextEnemyId}`;
-      const enemy = this.enemies.create(spawnX, spawnY, isBig ? 'bigenemy' : 'enemy');
+      const enemy = this.enemies.create(spawnX, spawnY, texture);
       if (enemy) {
         enemy.setData('syncId', enemyId);
-        enemy.setData('type', isBig ? 'big' : 'normal');
-        enemy.setData('hp', isBig ? 5 : 1);
+        enemy.setData('type', enemyType);
+        enemy.setData('hp', hp);
+        enemy.setData('spawnTime', this.time.now - Phaser.Math.Between(0, 10000));
         enemy.setBounce(1);
         enemy.setCollideWorldBounds(true);
-        if (isHost) this.broadcastEffect(isBig ? 'big-spawn' : 'spawn');
+        if (isHost) this.broadcastEffect(enemyType === 'big' ? 'big-spawn' : 'spawn');
       }
     });
   }
@@ -587,6 +621,22 @@ class MainScene extends Phaser.Scene {
     }
   }
 
+  spawnLaserEnemy() {
+    if (!this.gameStarted || this.gameOver || this.isPaused) return;
+    const spawn = this.getSpawnPointOutsideBase();
+    const enemyId = `enemy-${++this.nextEnemyId}`;
+    const enemy = this.enemies.create(spawn.x, spawn.y, 'laserenemy');
+    if (enemy) {
+      enemy.setData('syncId', enemyId);
+      enemy.setData('type', 'laser');
+      enemy.setData('hp', 3);
+      enemy.setData('spawnTime', this.time.now - Phaser.Math.Between(0, 10000));
+      enemy.setBounce(1);
+      enemy.setCollideWorldBounds(true);
+      if (isHost) this.broadcastEffect('spawn');
+    }
+  }
+
   private applyEffect(effect: PeerEffectMessage['effect'], x?: number, y?: number) {
     switch (effect) {
       case 'explosion':
@@ -609,6 +659,9 @@ class MainScene extends Phaser.Scene {
         break;
       case 'shot':
         if (synth) synth.playShot();
+        break;
+      case 'laser':
+        if (synth) synth.playLaser();
         break;
     }
   }
@@ -640,7 +693,8 @@ class MainScene extends Phaser.Scene {
       this.broadcastEffect('explosion', enemySprite.x, enemySprite.y);
       enemySprite.destroy();
       const type = enemySprite.getData('type');
-      this.score += type === 'spawner' ? 500 : type === 'big' ? 50 : 10;
+      this.score +=
+        type === 'spawner' ? 500 : type === 'big' ? 50 : type === 'laser' ? 25 : 10;
       this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
     } else {
       enemySprite.setTintFill(0xffffff);
@@ -756,7 +810,13 @@ class MainScene extends Phaser.Scene {
       let sprite = this.enemySprites[enemy.id];
       if (!sprite) {
         const texture =
-          enemy.type === 'spawner' ? 'spawner' : enemy.type === 'big' ? 'bigenemy' : 'enemy';
+          enemy.type === 'spawner'
+            ? 'spawner'
+            : enemy.type === 'big'
+            ? 'bigenemy'
+            : enemy.type === 'laser'
+            ? 'laserenemy'
+            : 'enemy';
         sprite = this.enemies.create(enemy.x, enemy.y, texture);
         if (!sprite) return;
         sprite.setData('syncId', enemy.id);
@@ -767,7 +827,12 @@ class MainScene extends Phaser.Scene {
       sprite.setVisible(true);
       sprite.setActive(true);
       sprite.setData('type', enemy.type);
-      sprite.setData('hp', enemy.type === 'spawner' ? 100 : enemy.type === 'big' ? 5 : 1);
+      sprite.setData(
+        'hp',
+        enemy.type === 'spawner' ? 100 : enemy.type === 'big' ? 5 : enemy.type === 'laser' ? 3 : 1
+      );
+      sprite.setData('laserState', enemy.laserState || 'idle');
+      sprite.setData('laserAngle', enemy.laserAngle ?? enemy.r);
       nextEnemySprites[enemy.id] = sprite;
     });
 
@@ -841,6 +906,8 @@ class MainScene extends Phaser.Scene {
         y: e.y,
         type: e.getData('type') as string,
         r: e.rotation,
+        laserState: e.getData('laserState'),
+        laserAngle: e.getData('laserAngle'),
       })),
       bullets: this.bullets.getChildren().map((b: Phaser.GameObjects.Sprite) => ({
         id: (b.getData('syncId') as string) || '',
@@ -1093,6 +1160,101 @@ class MainScene extends Phaser.Scene {
           }
         });
 
+        if (enemy.getData('type') === 'laser') {
+          let spawnTime = enemy.getData('spawnTime') as number;
+          if (!spawnTime) {
+            spawnTime = time - Phaser.Math.Between(0, 10000);
+            enemy.setData('spawnTime', spawnTime);
+          }
+          const cycleTime = (time - spawnTime) % 10000;
+
+          if (cycleTime >= 8800 && cycleTime < 9800) {
+            // Charging phase (1s duration: 8800ms - 9800ms)
+            if (enemy.getData('laserState') !== 'charging') {
+              enemy.setData('laserState', 'charging');
+              let angle = enemy.rotation;
+              if (target) {
+                angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
+              }
+              enemy.setData('laserAngle', angle);
+            }
+            enemy.setVelocity(0, 0);
+            enemy.rotation = enemy.getData('laserAngle') as number;
+          } else if (cycleTime >= 9800) {
+            // Firing phase (200ms duration: 9800ms - 10000ms)
+            if (enemy.getData('laserState') !== 'firing') {
+              enemy.setData('laserState', 'firing');
+              this.broadcastEffect('laser', enemy.x, enemy.y);
+              this.cameras.main.shake(100, 0.005);
+            }
+            enemy.setVelocity(0, 0);
+            const angle = (enemy.getData('laserAngle') as number) ?? enemy.rotation;
+            enemy.rotation = angle;
+
+            const endPos = this.getLaserEndPoint(enemy.x, enemy.y, angle);
+            const beamWidth = 16;
+            const playerHitRadius = 15;
+
+            alivePlayers.forEach((player) => {
+              if (!player || !player.active || player.getData('isDead')) return;
+              const dist = this.pointToSegmentDistance(
+                player.x,
+                player.y,
+                enemy.x,
+                enemy.y,
+                endPos.x,
+                endPos.y
+              );
+              if (dist <= beamWidth / 2 + playerHitRadius) {
+                this.handlePlayerDeath(player);
+              }
+            });
+          } else {
+            // Normal moving phase
+            if (enemy.getData('laserState') !== 'idle') {
+              enemy.setData('laserState', 'idle');
+            }
+            if (this.isInBaseArea(enemy.x, enemy.y)) {
+              const angle = Phaser.Math.Angle.Between(
+                this.baseCenter.x,
+                this.baseCenter.y,
+                enemy.x,
+                enemy.y
+              );
+              const safeX = this.baseCenter.x + Math.cos(angle) * (this.baseRadius + 25);
+              const safeY = this.baseCenter.y + Math.sin(angle) * (this.baseRadius + 25);
+              enemy.setPosition(safeX, safeY);
+              this.physics.velocityFromRotation(
+                angle + Math.PI,
+                180,
+                enemy.body.velocity as Phaser.Math.Vector2
+              );
+              enemy.rotation = angle + Math.PI;
+              return;
+            }
+
+            if (!target || minDist > 600) {
+              let wanderDirection = enemy.getData('wanderDirection') || 0;
+              let nextTurnAt = enemy.getData('nextTurnAt') || 0;
+              if (time > nextTurnAt) {
+                wanderDirection = Phaser.Math.FloatBetween(0, Math.PI * 2);
+                enemy.setData('wanderDirection', wanderDirection);
+                enemy.setData('nextTurnAt', time + 800);
+              }
+              this.physics.velocityFromRotation(
+                wanderDirection,
+                80,
+                enemy.body.velocity as Phaser.Math.Vector2
+              );
+              enemy.rotation = wanderDirection;
+            } else {
+              this.physics.moveToObject(enemy, target, 120);
+              enemy.rotation = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
+            }
+          }
+          return;
+        }
+
         if (this.isInBaseArea(enemy.x, enemy.y)) {
           const angle = Phaser.Math.Angle.Between(
             this.baseCenter.x,
@@ -1132,6 +1294,113 @@ class MainScene extends Phaser.Scene {
         }
       });
     }
+
+    this.drawLasers();
+  }
+
+  private getLaserEndPoint(x: number, y: number, angle: number): { x: number; y: number } {
+    let maxDist = 2000;
+    const cx = this.baseCenter.x;
+    const cy = this.baseCenter.y;
+    const r = this.baseRadius;
+    const dx = x - cx;
+    const dy = y - cy;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    const b = 2 * (dx * cos + dy * sin);
+    const c = dx * dx + dy * dy - r * r;
+    const disc = b * b - 4 * c;
+
+    if (disc >= 0) {
+      const sqrtDisc = Math.sqrt(disc);
+      const t1 = (-b - sqrtDisc) / 2;
+      const t2 = (-b + sqrtDisc) / 2;
+
+      if (t1 > 0 && t1 < maxDist) {
+        maxDist = t1;
+      } else if (t2 > 0 && t2 < maxDist) {
+        maxDist = t2;
+      }
+    }
+
+    return {
+      x: x + cos * maxDist,
+      y: y + sin * maxDist,
+    };
+  }
+
+  private pointToSegmentDistance(
+    px: number,
+    py: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number
+  ): number {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const l2 = dx * dx + dy * dy;
+    if (l2 === 0) return Phaser.Math.Distance.Between(px, py, x1, y1);
+    let t = ((px - x1) * dx + (py - y1) * dy) / l2;
+    t = Math.max(0, Math.min(1, t));
+    const projX = x1 + t * dx;
+    const projY = y1 + t * dy;
+    return Phaser.Math.Distance.Between(px, py, projX, projY);
+  }
+
+  private drawLasers() {
+    if (!this.laserGraphics) return;
+    this.laserGraphics.clear();
+
+    const activeEnemies: Array<{
+      x: number;
+      y: number;
+      state?: string;
+      angle?: number;
+    }> = [];
+
+    if (isHost) {
+      this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
+        if (e.active && e.getData('type') === 'laser') {
+          activeEnemies.push({
+            x: e.x,
+            y: e.y,
+            state: e.getData('laserState'),
+            angle: e.getData('laserAngle'),
+          });
+        }
+      });
+    } else {
+      Object.values(this.enemySprites).forEach((e) => {
+        if (e.active && e.getData('type') === 'laser') {
+          activeEnemies.push({
+            x: e.x,
+            y: e.y,
+            state: e.getData('laserState'),
+            angle: e.getData('laserAngle'),
+          });
+        }
+      });
+    }
+
+    activeEnemies.forEach((e) => {
+      const state = e.state;
+      const angle = e.angle ?? 0;
+      const endPos = this.getLaserEndPoint(e.x, e.y, angle);
+
+      if (state === 'charging') {
+        this.laserGraphics.lineStyle(12, 0xff0055, 0.25);
+        this.laserGraphics.lineBetween(e.x, e.y, endPos.x, endPos.y);
+        this.laserGraphics.lineStyle(2, 0xff6688, 0.7);
+        this.laserGraphics.lineBetween(e.x, e.y, endPos.x, endPos.y);
+      } else if (state === 'firing') {
+        this.laserGraphics.lineStyle(24, 0xff0044, 0.85);
+        this.laserGraphics.lineBetween(e.x, e.y, endPos.x, endPos.y);
+        this.laserGraphics.lineStyle(8, 0xffffff, 1.0);
+        this.laserGraphics.lineBetween(e.x, e.y, endPos.x, endPos.y);
+      }
+    });
   }
 }
 
