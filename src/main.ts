@@ -1,12 +1,9 @@
-// ---------- Global Networking ----------
-let isHost = false;
-let roomCode = null;          // host's peer ID (used as join code)
-let hostConnection = null;    // client's active connection to host
-let clientPeer = null;        // client's own Peer instance
-let hostPeer = null;          // host's Peer instance
-let connections = [];         // host side: array of active DataConnections
+// @ts-nocheck
+/// <reference types="vite/client" />
 
-// Lightweight WebAudio synth for in-game sounds
+import Phaser from 'phaser';
+import Peer from 'peerjs';
+
 class Synth {
     constructor() {
         this.ctx = null;
@@ -32,13 +29,13 @@ class Synth {
         this.init();
         if (!this.ctx) return;
         if (this.ctx.state === 'suspended') {
-            this.ctx.resume().then(() => { this.unlocked = true; }).catch(()=>{});
+            this.ctx.resume().then(() => { this.unlocked = true; }).catch(() => {});
         } else {
             this.unlocked = true;
         }
     }
 
-    playOsc(type, freq, duration = 0.12, gain = 0.12) {
+    playOsc(type: OscillatorType, freq: number, duration = 0.12, gain = 0.12) {
         if (!this.ctx || !this.unlocked) return;
         const now = this.ctx.currentTime;
         const o = this.ctx.createOscillator();
@@ -47,7 +44,8 @@ class Synth {
         o.frequency.setValueAtTime(freq, now);
         g.gain.setValueAtTime(gain, now);
         g.gain.exponentialRampToValueAtTime(0.001, now + duration);
-        o.connect(g); g.connect(this.master);
+        o.connect(g);
+        g.connect(this.master!);
         o.start(now);
         o.stop(now + duration + 0.02);
     }
@@ -61,213 +59,104 @@ class Synth {
     playGo() { this.playOsc('sawtooth', 1400, 0.18, 0.12); }
 }
 
-window.synth = window.synth || new Synth();
-// DOM Elements
-const sectorButtons = Array.from(document.querySelectorAll('.sector-btn'));
-const statusText = document.getElementById('lobby-status');
-
-// ---------- Lobby Events ----------
-sectorButtons.forEach((button) => {
-    button.addEventListener('click', () => {
-        const sector = button.getAttribute('data-sector');
-        if (!sector) return;
-        selectSector(sector);
-    });
-});
-
-function selectSector(sector) {
-    const targetPeerId = `neon-sector-${sector}`;
-
-    sectorButtons.forEach((button) => {
-        button.disabled = true;
-    });
-    statusText.innerText = `Preparing sector ${sector}...`;
-
-    roomCode = targetPeerId;
-    isHost = false;
-    hostConnection = null;
-
-    if (hostPeer) {
-        hostPeer.destroy();
-        hostPeer = null;
-    }
-    if (clientPeer) {
-        clientPeer.destroy();
-        clientPeer = null;
-    }
-
-    hostPeer = new Peer(targetPeerId);
-
-    hostPeer.on('open', () => {
-        isHost = true;
-        statusText.innerText = `Sector ${sector} host ready. Peer ID: ${targetPeerId}`;
-        startGameAsHost();
-    });
-
-    hostPeer.on('connection', (conn) => {
-        connections.push(conn);
-        conn.on('open', () => {
-            console.log('Client connected:', conn.peer);
-        });
-        conn.on('data', (data) => {
-            if (window.gameScene && window.gameScene.handleRemoteInput) {
-                window.gameScene.handleRemoteInput(conn.peer, data);
-            }
-        });
-        conn.on('close', () => {
-            const idx = connections.indexOf(conn);
-            if (idx > -1) connections.splice(idx, 1);
-            if (window.gameScene && window.gameScene.removeRemotePlayer) {
-                window.gameScene.removeRemotePlayer(conn.peer);
-            }
-        });
-        conn.on('error', (err) => {
-            console.warn('Connection error:', err);
-        });
-    });
-
-    hostPeer.on('error', (err) => {
-        const message = (err && (err.message || err.type)) || '';
-        const isUnavailableId = err && (
-            err.type === 'unavailable-id' ||
-            err.type === 'peer-unavailable' ||
-            message.toLowerCase().includes('unavailable') ||
-            message.toLowerCase().includes('taken')
-        );
-
-        if (isUnavailableId) {
-            if (hostPeer) {
-                hostPeer.destroy();
-                hostPeer = null;
-            }
-            statusText.innerText = `Sector ${sector} is already live. Joining...`;
-            joinSector(targetPeerId, sector);
-            return;
-        }
-
-        statusText.innerText = `Peer error: ${message || 'Unknown error'}`;
-        sectorButtons.forEach((button) => {
-            button.disabled = false;
-        });
-    });
-}
-
-function joinSector(targetPeerId, sector) {
-    isHost = false;
-    roomCode = targetPeerId;
-    clientPeer = new Peer();
-
-    clientPeer.on('open', () => {
-        statusText.innerText = `Connecting to sector ${sector}...`;
-        const conn = clientPeer.connect(targetPeerId, { reliable: true });
-        hostConnection = conn;
-
-        conn.on('open', () => {
-            statusText.innerText = `Connected to sector ${sector}. Starting game...`;
-            startGameAsClient(conn);
-        });
-
-        conn.on('data', (data) => {
-            if (window.gameScene && window.gameScene.receiveState) {
-                window.gameScene.receiveState(data);
-            }
-        });
-
-        conn.on('close', () => {
-            statusText.innerText = `Connection to sector ${sector} was lost.`;
-            sectorButtons.forEach((button) => {
-                button.disabled = false;
-            });
-        });
-
-        conn.on('error', (err) => {
-            statusText.innerText = `Connection error: ${err.message || 'Unable to join sector'}`;
-            sectorButtons.forEach((button) => {
-                button.disabled = false;
-            });
-        });
-    });
-
-    clientPeer.on('error', (err) => {
-        statusText.innerText = `Peer error: ${err.message || 'Unable to create client peer'}`;
-        sectorButtons.forEach((button) => {
-            button.disabled = false;
-        });
-    });
-}
-
-// ---------- Game Scene ----------
 class MainScene extends Phaser.Scene {
+    private score = 0;
+    private gameOver = false;
+    private isPaused = false;
+    private lastFired = 0;
+    private fireRate = 120;
+    private gameStarted = true;
+    private player: Phaser.Physics.Arcade.Sprite | null = null;
+    private remotePlayers: Record<string, Phaser.Physics.Arcade.Sprite> = {};
+    private bullets!: Phaser.Physics.Arcade.Group;
+    private enemies!: Phaser.Physics.Arcade.Group;
+    private emitter!: Phaser.GameObjects.Particles.ParticleEmitter;
+    private scoreText!: Phaser.GameObjects.Text;
+    private pauseText!: Phaser.GameObjects.Text;
+    private gameOverText!: Phaser.GameObjects.Text;
+    private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
+    private wasd!: Record<string, Phaser.Input.Keyboard.Key>;
+    private keyP!: Phaser.Input.Keyboard.Key;
+    private joyLeftBase!: Phaser.GameObjects.Arc;
+    private joyLeftThumb!: Phaser.GameObjects.Arc;
+    private joyRightBase!: Phaser.GameObjects.Arc;
+    private joyRightThumb!: Phaser.GameObjects.Arc;
+    private leftPointer: Phaser.Input.Pointer | null = null;
+    private rightPointer: Phaser.Input.Pointer | null = null;
+    private leftVector: { x: number; y: number } | null = null;
+    private rightVector: { angle: number; force: number } | null = null;
+    private localPeerId: string | null = null;
+    private hostPlayerSprite?: Phaser.GameObjects.Sprite;
+    private otherRemoteSprites: Record<string, Phaser.GameObjects.Sprite> = {};
+    private enemySpeed = 150;
+    private spawnTimer?: Phaser.Time.TimerEvent;
+    private bigSpawnTimer?: Phaser.Time.TimerEvent;
+    private broadcastTimer?: Phaser.Time.TimerEvent;
+    private inputTimer?: Phaser.Time.TimerEvent;
+
     constructor() {
         super({ key: 'MainScene' });
     }
 
     preload() {
-        // ... textures identical to original ...
-        let playerGraphics = this.make.graphics({ add: false });
+        const playerGraphics = this.make.graphics({ add: false });
         playerGraphics.fillStyle(0x00ffff, 1);
         playerGraphics.fillTriangle(30, 15, 0, 30, 0, 0);
         playerGraphics.generateTexture('player', 30, 30);
 
-        let guestGraphics = this.make.graphics({ add: false });
+        const guestGraphics = this.make.graphics({ add: false });
         guestGraphics.fillStyle(0x00ff88, 1);
         guestGraphics.fillTriangle(30, 15, 0, 30, 0, 0);
         guestGraphics.generateTexture('guest', 30, 30);
 
-        let enemyGraphics = this.make.graphics({ add: false });
+        const enemyGraphics = this.make.graphics({ add: false });
         enemyGraphics.lineStyle(3, 0xff00ff);
         enemyGraphics.strokeRect(2, 2, 26, 26);
         enemyGraphics.fillStyle(0x330033, 1);
         enemyGraphics.fillRect(2, 2, 26, 26);
         enemyGraphics.generateTexture('enemy', 30, 30);
 
-        let bigEnemyGraphics = this.make.graphics({ add: false });
+        const bigEnemyGraphics = this.make.graphics({ add: false });
         bigEnemyGraphics.lineStyle(4, 0xff8800);
         bigEnemyGraphics.strokeCircle(25, 25, 23);
         bigEnemyGraphics.fillStyle(0x442200, 1);
         bigEnemyGraphics.fillCircle(25, 25, 23);
         bigEnemyGraphics.generateTexture('bigenemy', 50, 50);
 
-        let bulletGraphics = this.make.graphics({ add: false });
+        const bulletGraphics = this.make.graphics({ add: false });
         bulletGraphics.fillStyle(0xffff00, 1);
         bulletGraphics.fillCircle(8, 8, 8);
         bulletGraphics.generateTexture('bullet', 16, 16);
 
-        let gridGraphics = this.make.graphics({ add: false });
+        const gridGraphics = this.make.graphics({ add: false });
         gridGraphics.lineStyle(1, 0x003333, 0.5);
         gridGraphics.strokeRect(0, 0, 100, 100);
         gridGraphics.generateTexture('grid', 100, 100);
 
-        let particleGraphics = this.make.graphics({ add: false });
+        const particleGraphics = this.make.graphics({ add: false });
         particleGraphics.fillStyle(0x00ffff, 1);
         particleGraphics.fillRect(0, 0, 4, 4);
         particleGraphics.generateTexture('particle', 4, 4);
     }
 
     create() {
-        window.gameScene = this; // expose for networking hooks
+        window.gameScene = this;
 
         this.physics.world.setBounds(0, 0, 2000, 2000);
         this.cameras.main.setBounds(0, 0, 2000, 2000);
         this.add.tileSprite(1000, 1000, 2000, 2000, 'grid');
 
-        this.score = 0;
         this.gameOver = false;
         this.isPaused = false;
         this.lastFired = 0;
         this.fireRate = 120;
         this.gameStarted = true;
 
-        // Local player (host always has a player; client's own player also exists)
         this.player = this.physics.add.sprite(1000, 1000, isHost ? 'player' : 'guest');
         this.player.setCollideWorldBounds(true);
         this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
-        this.localPeerId = (clientPeer && clientPeer.id) ? clientPeer.id : null;
+        this.localPeerId = clientPeer && clientPeer.id ? clientPeer.id : null;
 
-        // Remote players (only host uses this map)
-        this.remotePlayers = {}; // key: peerId, value: Phaser.Sprite
-
-        // Groups
         this.bullets = this.physics.add.group({ runChildUpdate: true });
         this.enemies = this.physics.add.group();
 
@@ -292,13 +181,11 @@ class MainScene extends Phaser.Scene {
             fontSize: '48px', fill: '#ff00ff', align: 'center', fontFamily: 'Courier', fontStyle: 'bold'
         }).setOrigin(0.5).setScrollFactor(0).setVisible(false).setDepth(300);
 
-        // unlock audio on first input (user gesture requirement)
         this.input.once('pointerdown', () => { if (window.synth) window.synth.unlock(); });
 
-        // Input handling (same as original)
         this.input.addPointer(2);
         this.cursors = this.input.keyboard.createCursorKeys();
-        this.wasd = this.input.keyboard.addKeys('W,A,S,D');
+        this.wasd = this.input.keyboard.addKeys('W,A,S,D') as Record<string, Phaser.Input.Keyboard.Key>;
         this.keyP = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
 
         this.joyLeftBase = this.add.circle(0, 0, 60, 0x00ffff, 0.2).setVisible(false).setScrollFactor(0).setDepth(100);
@@ -306,29 +193,19 @@ class MainScene extends Phaser.Scene {
         this.joyRightBase = this.add.circle(0, 0, 60, 0xff00ff, 0.2).setVisible(false).setScrollFactor(0).setDepth(100);
         this.joyRightThumb = this.add.circle(0, 0, 30, 0xff00ff, 0.6).setVisible(false).setScrollFactor(0).setDepth(100);
 
-        this.leftPointer = null;
-        this.rightPointer = null;
-        this.leftVector = null;
-        this.rightVector = null;
-
         this.input.on('pointerdown', this.handlePointerDown, this);
         this.input.on('pointermove', this.handlePointerMove, this);
         this.input.on('pointerup', this.handlePointerUp, this);
         this.input.on('pointerout', this.handlePointerUp, this);
 
-        // Host specific setup
         if (isHost) {
             this.enemySpeed = 150;
             this.spawnTimer = this.time.addEvent({ delay: 1000, callback: this.spawnEnemy, callbackScope: this, loop: true });
             this.bigSpawnTimer = this.time.addEvent({ delay: 6000, callback: this.spawnBigEnemy, callbackScope: this, loop: true });
 
-            // Collisions (host only)
-            this.physics.add.collider(this.bullets, this.enemies, this.hitEnemy, null, this);
-            this.physics.add.collider(this.player, this.enemies, this.hitPlayer, null, this);
-            // remote players also collide with enemies
-            // We'll dynamically add colliders when remote players join
+            this.physics.add.collider(this.bullets, this.enemies, this.hitEnemy, undefined, this);
+            this.physics.add.collider(this.player, this.enemies, this.hitPlayer, undefined, this);
 
-            // State broadcast timer
             this.broadcastTimer = this.time.addEvent({
                 delay: 50,
                 callback: this.broadcastState,
@@ -336,7 +213,6 @@ class MainScene extends Phaser.Scene {
                 loop: true
             });
         } else {
-            // Client: send input timer (or update loop)
             this.inputTimer = this.time.addEvent({
                 delay: 30,
                 callback: this.sendInput,
@@ -348,8 +224,7 @@ class MainScene extends Phaser.Scene {
         this.scale.on('resize', this.resize, this);
     }
 
-    // --- Input handling (same as original) ---
-    handlePointerDown(pointer) {
+    handlePointerDown(pointer: Phaser.Input.Pointer) {
         if (this.gameOver) { if (isHost) this.scene.restart(); return; }
         const halfWidth = this.scale.width / 2;
         if (pointer.x < halfWidth) {
@@ -369,7 +244,7 @@ class MainScene extends Phaser.Scene {
         }
     }
 
-    handlePointerMove(pointer) {
+    handlePointerMove(pointer: Phaser.Input.Pointer) {
         if (this.gameOver || this.isPaused) return;
         const maxRadius = 60;
         if (pointer === this.leftPointer) {
@@ -389,7 +264,7 @@ class MainScene extends Phaser.Scene {
         }
     }
 
-    handlePointerUp(pointer) {
+    handlePointerUp(pointer: Phaser.Input.Pointer) {
         if (pointer === this.leftPointer) {
             this.leftPointer = null;
             this.joyLeftBase.setVisible(false);
@@ -403,15 +278,14 @@ class MainScene extends Phaser.Scene {
         }
     }
 
-    // --- Game logic (host) ---
     spawnEnemy() {
         if (!this.gameStarted || this.gameOver || this.isPaused) return;
-        let cam = this.cameras.main;
-        let angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
-        let dist = Math.max(cam.width, cam.height) / 2 + 100;
-        let ex = Phaser.Math.Clamp(this.player.x + Math.cos(angle) * dist, 20, 1980);
-        let ey = Phaser.Math.Clamp(this.player.y + Math.sin(angle) * dist, 20, 1980);
-        let enemy = this.enemies.create(ex, ey, 'enemy');
+        const cam = this.cameras.main;
+        const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+        const dist = Math.max(cam.width, cam.height) / 2 + 100;
+        const ex = Phaser.Math.Clamp(this.player!.x + Math.cos(angle) * dist, 20, 1980);
+        const ey = Phaser.Math.Clamp(this.player!.y + Math.sin(angle) * dist, 20, 1980);
+        const enemy = this.enemies.create(ex, ey, 'enemy');
         if (enemy) {
             enemy.setData('type', 'normal');
             enemy.setData('hp', 1);
@@ -423,12 +297,12 @@ class MainScene extends Phaser.Scene {
 
     spawnBigEnemy() {
         if (!this.gameStarted || this.gameOver || this.isPaused) return;
-        let cam = this.cameras.main;
-        let angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
-        let dist = Math.max(cam.width, cam.height) / 2 + 150;
-        let ex = Phaser.Math.Clamp(this.player.x + Math.cos(angle) * dist, 40, 1960);
-        let ey = Phaser.Math.Clamp(this.player.y + Math.sin(angle) * dist, 40, 1960);
-        let enemy = this.enemies.create(ex, ey, 'bigenemy');
+        const cam = this.cameras.main;
+        const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+        const dist = Math.max(cam.width, cam.height) / 2 + 150;
+        const ex = Phaser.Math.Clamp(this.player!.x + Math.cos(angle) * dist, 40, 1960);
+        const ey = Phaser.Math.Clamp(this.player!.y + Math.sin(angle) * dist, 40, 1960);
+        const enemy = this.enemies.create(ex, ey, 'bigenemy');
         if (enemy) {
             enemy.setData('type', 'big');
             enemy.setData('hp', 5);
@@ -438,9 +312,9 @@ class MainScene extends Phaser.Scene {
         }
     }
 
-    hitEnemy(bullet, enemy) {
+    hitEnemy(bullet: Phaser.GameObjects.GameObject, enemy: Phaser.GameObjects.GameObject) {
         bullet.destroy();
-        let hp = enemy.getData('hp') - 1;
+        const hp = enemy.getData('hp') - 1;
         enemy.setData('hp', hp);
         if (hp <= 0) {
             this.emitter.explode(10, enemy.x, enemy.y);
@@ -455,7 +329,7 @@ class MainScene extends Phaser.Scene {
         this.cameras.main.shake(30, 0.003);
     }
 
-    respawnPlayer(player) {
+    respawnPlayer(player: Phaser.Physics.Arcade.Sprite) {
         if (!player || !player.active) return;
 
         const spawnX = 1000 + Phaser.Math.Between(-200, 200);
@@ -469,7 +343,7 @@ class MainScene extends Phaser.Scene {
         player.setVelocity(0, 0);
     }
 
-    handlePlayerDeath(player) {
+    handlePlayerDeath(player: Phaser.Physics.Arcade.Sprite) {
         if (!player || !player.active || player.getData('isDead')) return;
 
         player.setData('isDead', true);
@@ -486,17 +360,17 @@ class MainScene extends Phaser.Scene {
         });
     }
 
-    hitPlayer(player, enemy) {
+    hitPlayer(player: Phaser.Physics.Arcade.Sprite, enemy: Phaser.GameObjects.GameObject) {
         if (this.gameOver) return;
         this.handlePlayerDeath(player);
     }
 
     getAlivePlayers() {
-        const alivePlayers = [];
+        const alivePlayers = [] as Phaser.Physics.Arcade.Sprite[];
         if (this.player && this.player.active && !this.player.getData('isDead')) {
             alivePlayers.push(this.player);
         }
-        for (let id in this.remotePlayers) {
+        for (const id in this.remotePlayers) {
             const rp = this.remotePlayers[id];
             if (rp && rp.active && !rp.getData('isDead')) {
                 alivePlayers.push(rp);
@@ -505,20 +379,15 @@ class MainScene extends Phaser.Scene {
         return alivePlayers;
     }
 
-    // --- Networking: Host side ---
-    handleRemoteInput(peerId, data) {
+    handleRemoteInput(peerId: string, data: any) {
         if (!isHost || this.gameOver) return;
-        // Store input for that remote player
         if (!this.remotePlayers[peerId]) {
-            // Create remote player sprite
-            let rp = this.physics.add.sprite(1000, 1000, 'guest');
+            const rp = this.physics.add.sprite(1000, 1000, 'guest');
             rp.setCollideWorldBounds(true);
             this.remotePlayers[peerId] = rp;
-            // Add collider against enemies
-            this.physics.add.collider(rp, this.enemies, this.hitPlayer, null, this);
+            this.physics.add.collider(rp, this.enemies, this.hitPlayer, undefined, this);
         }
-        // Update remote player's target movement and shooting from data
-        let rp = this.remotePlayers[peerId];
+        const rp = this.remotePlayers[peerId];
         rp.setData('moveX', data.moveX || 0);
         rp.setData('moveY', data.moveY || 0);
         rp.setData('aimAngle', data.aimAngle || 0);
@@ -526,7 +395,7 @@ class MainScene extends Phaser.Scene {
         rp.setData('lastFired', rp.getData('lastFired') || 0);
     }
 
-    removeRemotePlayer(peerId) {
+    removeRemotePlayer(peerId: string) {
         if (this.remotePlayers[peerId]) {
             this.remotePlayers[peerId].destroy();
             delete this.remotePlayers[peerId];
@@ -535,36 +404,31 @@ class MainScene extends Phaser.Scene {
 
     broadcastState() {
         if (!isHost || !connections.length) return;
-        // Build snapshot
-        const players = {};
-        // host player
-        players['host'] = { x: this.player.x, y: this.player.y, r: this.player.rotation, isDead: !!this.player.getData('isDead') };
-        // remote players
-        for (let id in this.remotePlayers) {
-            let rp = this.remotePlayers[id];
+        const players: Record<string, { x: number; y: number; r: number; isDead: boolean }> = {};
+        players['host'] = { x: this.player!.x, y: this.player!.y, r: this.player!.rotation, isDead: !!this.player!.getData('isDead') };
+        for (const id in this.remotePlayers) {
+            const rp = this.remotePlayers[id];
             players[id] = { x: rp.x, y: rp.y, r: rp.rotation, isDead: !!rp.getData('isDead') };
         }
 
         const state = {
             type: 'state',
             score: this.score,
-            players: players,
-            enemies: this.enemies.getChildren().map(e => ({
+            players,
+            enemies: this.enemies.getChildren().map((e: Phaser.GameObjects.GameObject) => ({
                 x: e.x, y: e.y, type: e.getData('type'), r: e.rotation
             })),
-            bullets: this.bullets.getChildren().map(b => ({ x: b.x, y: b.y })),
+            bullets: this.bullets.getChildren().map((b: Phaser.GameObjects.GameObject) => ({ x: b.x, y: b.y }))
         };
 
-        // Send to all connections
         connections.forEach(conn => conn.send(state));
     }
 
-    // --- Networking: Client side ---
     sendInput() {
         if (isHost) return;
         if (!hostConnection || !hostConnection.open) return;
 
-        let moveX = 0, moveY = 0;
+        let moveX = 0; let moveY = 0;
         if (this.leftVector) {
             moveX = this.leftVector.x;
             moveY = this.leftVector.y;
@@ -579,10 +443,9 @@ class MainScene extends Phaser.Scene {
         if (this.rightVector && this.rightVector.force > 0.2) {
             shoot = true;
             aimAngle = this.rightVector.angle;
-        } else if (this.input.activePointer.isDown && !this.leftPointer && !this.rightPointer) {
+        } else if (this.input!.activePointer.isDown && !this.leftPointer && !this.rightPointer) {
             shoot = true;
-            aimAngle = Phaser.Math.Angle.Between(this.player.x, this.player.y,
-                this.input.activePointer.worldX, this.input.activePointer.worldY);
+            aimAngle = Phaser.Math.Angle.Between(this.player!.x, this.player!.y, this.input!.activePointer.worldX, this.input!.activePointer.worldY);
         }
 
         hostConnection.send({
@@ -591,33 +454,27 @@ class MainScene extends Phaser.Scene {
         });
     }
 
-    receiveState(data) {
+    receiveState(data: any) {
         if (isHost || !data || data.type !== 'state') return;
-        // Update score display
         this.scoreText.setText('SCORE: ' + data.score + ' | ROLE: CLIENT');
 
-        // Sync enemies
         this.enemies.clear(true, true);
-        data.enemies.forEach(ed => {
-            let en = this.enemies.create(ed.x, ed.y, ed.type === 'big' ? 'bigenemy' : 'enemy');
+        data.enemies.forEach((ed: any) => {
+            const en = this.enemies.create(ed.x, ed.y, ed.type === 'big' ? 'bigenemy' : 'enemy');
             en.rotation = ed.r;
         });
 
-        // Sync bullets
         this.bullets.clear(true, true);
-        data.bullets.forEach(bd => {
-            let bul = this.bullets.create(bd.x, bd.y, 'bullet');
+        data.bullets.forEach((bd: any) => {
+            this.bullets.create(bd.x, bd.y, 'bullet');
         });
 
-        // Sync players (host + remote)
-        // Update our own player's position (to reflect what host thinks, but we also move locally)
         if (data.players) {
-            for (let id in data.players) {
+            for (const id in data.players) {
                 const playerState = data.players[id];
                 const isDead = !!(playerState && playerState.isDead);
 
                 if (id === 'host') {
-                    // Host's player in world – we can show a separate sprite for host
                     if (!this.hostPlayerSprite) {
                         this.hostPlayerSprite = this.add.sprite(playerState.x, playerState.y, 'player');
                         this.hostPlayerSprite.setDepth(2);
@@ -626,7 +483,6 @@ class MainScene extends Phaser.Scene {
                     this.hostPlayerSprite.rotation = playerState.r;
                     this.hostPlayerSprite.setVisible(!isDead);
                 } else if (id === this.localPeerId) {
-                    // Our own client player state from host
                     if (this.player) {
                         this.player.setData('isDead', isDead);
                         this.player.setVisible(!isDead);
@@ -636,10 +492,8 @@ class MainScene extends Phaser.Scene {
                         }
                     }
                 } else if (id !== 'host' && id !== this.localPeerId) {
-                    // Other remote players (not us)
-                    if (!this.otherRemoteSprites) this.otherRemoteSprites = {};
                     if (!this.otherRemoteSprites[id]) {
-                        let spr = this.add.sprite(playerState.x, playerState.y, 'guest');
+                        const spr = this.add.sprite(playerState.x, playerState.y, 'guest');
                         spr.setDepth(2);
                         this.otherRemoteSprites[id] = spr;
                     }
@@ -648,8 +502,8 @@ class MainScene extends Phaser.Scene {
                     this.otherRemoteSprites[id].setVisible(!isDead);
                 }
             }
-            // Remove sprites of disconnected players
-            for (let id in this.otherRemoteSprites) {
+
+            for (const id in this.otherRemoteSprites) {
                 if (!data.players[id]) {
                     this.otherRemoteSprites[id].destroy();
                     delete this.otherRemoteSprites[id];
@@ -658,12 +512,12 @@ class MainScene extends Phaser.Scene {
         }
     }
 
-    resize(gameSize) {
+    resize(gameSize: Phaser.Structs.Size) {
         if (this.gameOverText) this.gameOverText.setPosition(gameSize.width / 2, gameSize.height / 2);
         if (this.pauseText) this.pauseText.setPosition(gameSize.width / 2, gameSize.height / 2);
     }
 
-    update(time, delta) {
+    update(time: number, delta: number) {
         if (Phaser.Input.Keyboard.JustDown(this.keyP)) {
             this.isPaused = !this.isPaused;
             this.pauseText.setVisible(this.isPaused);
@@ -673,9 +527,8 @@ class MainScene extends Phaser.Scene {
 
         if (this.gameOver || this.isPaused || !this.gameStarted) return;
 
-        // Movement (local player)
-        let moveX = 0, moveY = 0;
-        if (!this.player.getData('isDead')) {
+        let moveX = 0; let moveY = 0;
+        if (!this.player!.getData('isDead')) {
             if (this.leftVector) {
                 moveX = this.leftVector.x;
                 moveY = this.leftVector.y;
@@ -685,55 +538,52 @@ class MainScene extends Phaser.Scene {
                 if (this.cursors.up.isDown || this.wasd.W.isDown) moveY = -1;
                 if (this.cursors.down.isDown || this.wasd.S.isDown) moveY = 1;
                 if (moveX !== 0 && moveY !== 0) {
-                    let len = Math.sqrt(moveX*moveX + moveY*moveY);
+                    const len = Math.sqrt(moveX * moveX + moveY * moveY);
                     moveX /= len; moveY /= len;
                 }
             }
 
             const speed = 350;
-            this.player.setVelocity(moveX * speed, moveY * speed);
+            this.player!.setVelocity(moveX * speed, moveY * speed);
 
-            // Aiming & Shooting (local)
             let isShooting = false;
             let aimAngle = 0;
             if (this.rightVector && this.rightVector.force > 0.2) {
                 isShooting = true;
                 aimAngle = this.rightVector.angle;
-            } else if (this.input.activePointer.isDown && !this.leftPointer && !this.rightPointer) {
+            } else if (this.input!.activePointer.isDown && !this.leftPointer && !this.rightPointer) {
                 isShooting = true;
-                aimAngle = Phaser.Math.Angle.Between(this.player.x, this.player.y,
-                    this.input.activePointer.worldX, this.input.activePointer.worldY);
+                aimAngle = Phaser.Math.Angle.Between(this.player!.x, this.player!.y, this.input!.activePointer.worldX, this.input!.activePointer.worldY);
             }
 
             if (isShooting) {
-                this.player.rotation = aimAngle;
+                this.player!.rotation = aimAngle;
                 if (time > this.lastFired) {
-                    let bullet = this.bullets.create(this.player.x, this.player.y, 'bullet');
+                    const bullet = this.bullets.create(this.player!.x, this.player!.y, 'bullet');
                     if (bullet) {
                         bullet.setActive(true).setVisible(true);
                         this.physics.velocityFromRotation(aimAngle, 1000, bullet.body.velocity);
                         bullet.rotation = aimAngle;
-                        bullet.born = 0;
-                        bullet.update = function(t, d) {
-                            this.born += d;
-                            if (this.born > 1500) this.destroy();
+                        bullet.setData('born', 0);
+                        bullet.update = function(t: number, d: number) {
+                            const born = (this as any).getData('born') + d;
+                            (this as any).setData('born', born);
+                            if (born > 1500) this.destroy();
                         };
                     }
                     this.lastFired = time + this.fireRate;
                 }
             } else if (moveX !== 0 || moveY !== 0) {
-                this.player.rotation = Math.atan2(moveY, moveX);
+                this.player!.rotation = Math.atan2(moveY, moveX);
             }
         } else {
-            this.player.setVelocity(0, 0);
+            this.player!.setVelocity(0, 0);
         }
 
-        // Host: update remote players and enemy AI
         if (isHost) {
             const speed = 350;
-            // Move remote players according to their last input
-            for (let id in this.remotePlayers) {
-                let rp = this.remotePlayers[id];
+            for (const id in this.remotePlayers) {
+                const rp = this.remotePlayers[id];
                 if (rp.getData('isDead')) {
                     rp.setVelocity(0, 0);
                     continue;
@@ -742,22 +592,22 @@ class MainScene extends Phaser.Scene {
                 let mx = rp.getData('moveX') || 0;
                 let my = rp.getData('moveY') || 0;
                 rp.setVelocity(mx * speed, my * speed);
-                                if (window.synth) window.synth.playShot();
+                if (window.synth) window.synth.playShot();
 
                 if (mx !== 0 || my !== 0) rp.rotation = Math.atan2(my, mx);
 
-                // Shooting for remote
                 if (rp.getData('shoot') && time > rp.getData('lastFired')) {
-                    let angle = rp.getData('aimAngle') || 0;
-                    let bul = this.bullets.create(rp.x, rp.y, 'bullet');
+                    const angle = rp.getData('aimAngle') || 0;
+                    const bul = this.bullets.create(rp.x, rp.y, 'bullet');
                     if (bul) {
                         bul.setActive(true).setVisible(true);
                         this.physics.velocityFromRotation(angle, 1000, bul.body.velocity);
                         bul.rotation = angle;
-                        bul.born = 0;
-                        bul.update = function(t, d) {
-                            this.born += d;
-                            if (this.born > 1500) this.destroy();
+                        bul.setData('born', 0);
+                        bul.update = function(t: number, d: number) {
+                            const born = (this as any).getData('born') + d;
+                            (this as any).setData('born', born);
+                            if (born > 1500) this.destroy();
                         };
                         if (window.synth) window.synth.playShot();
                     }
@@ -765,12 +615,11 @@ class MainScene extends Phaser.Scene {
                 }
             }
 
-            // Enemy AI
             const alivePlayers = this.getAlivePlayers();
-            this.enemies.getChildren().forEach(enemy => {
+            this.enemies.getChildren().forEach((enemy: Phaser.GameObjects.GameObject) => {
                 if (!enemy.active) return;
 
-                let target = null;
+                let target: Phaser.Physics.Arcade.Sprite | null = null;
                 let minDist = Infinity;
                 alivePlayers.forEach(player => {
                     if (!player || !player.active) return;
@@ -800,10 +649,170 @@ class MainScene extends Phaser.Scene {
     }
 }
 
-// ---------- Start functions ----------
+let isHost = false;
+let roomCode: string | null = null;
+let hostConnection: any = null;
+let clientPeer: any = null;
+let hostPeer: any = null;
+let connections: any[] = [];
+
+const synth = (window.synth = window.synth || new Synth());
+const sectorButtons = Array.from(document.querySelectorAll<HTMLElement>('.sector-btn'));
+const statusText = document.getElementById('lobby-status');
+
+sectorButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+        const sector = button.getAttribute('data-sector');
+        if (!sector) return;
+        selectSector(sector);
+    });
+});
+
+function selectSector(sector: string) {
+    const targetPeerId = `neon-sector-${sector}`;
+
+    sectorButtons.forEach((button) => {
+        button.disabled = true;
+    });
+    if (statusText) {
+        statusText.innerText = `Preparing sector ${sector}...`;
+    }
+
+    roomCode = targetPeerId;
+    isHost = false;
+    hostConnection = null;
+
+    if (hostPeer) {
+        hostPeer.destroy();
+        hostPeer = null;
+    }
+    if (clientPeer) {
+        clientPeer.destroy();
+        clientPeer = null;
+    }
+
+    hostPeer = new Peer(targetPeerId);
+
+    hostPeer.on('open', () => {
+        isHost = true;
+        if (statusText) {
+            statusText.innerText = `Sector ${sector} host ready. Peer ID: ${targetPeerId}`;
+        }
+        startGameAsHost();
+    });
+
+    hostPeer.on('connection', (conn: any) => {
+        connections.push(conn);
+        conn.on('open', () => {
+            console.log('Client connected:', conn.peer);
+        });
+        conn.on('data', (data: any) => {
+            if (window.gameScene && (window.gameScene as any).handleRemoteInput) {
+                (window.gameScene as any).handleRemoteInput(conn.peer, data);
+            }
+        });
+        conn.on('close', () => {
+            const idx = connections.indexOf(conn);
+            if (idx > -1) connections.splice(idx, 1);
+            if (window.gameScene && (window.gameScene as any).removeRemotePlayer) {
+                (window.gameScene as any).removeRemotePlayer(conn.peer);
+            }
+        });
+        conn.on('error', (err: any) => {
+            console.warn('Connection error:', err);
+        });
+    });
+
+    hostPeer.on('error', (err: any) => {
+        const message = (err && (err.message || err.type)) || '';
+        const isUnavailableId = err && (
+            err.type === 'unavailable-id' ||
+            err.type === 'peer-unavailable' ||
+            message.toLowerCase().includes('unavailable') ||
+            message.toLowerCase().includes('taken')
+        );
+
+        if (isUnavailableId) {
+            if (hostPeer) {
+                hostPeer.destroy();
+                hostPeer = null;
+            }
+            if (statusText) {
+                statusText.innerText = `Sector ${sector} is already live. Joining...`;
+            }
+            joinSector(targetPeerId, sector);
+            return;
+        }
+
+        if (statusText) {
+            statusText.innerText = `Peer error: ${message || 'Unknown error'}`;
+        }
+        sectorButtons.forEach((button) => {
+            button.disabled = false;
+        });
+    });
+}
+
+function joinSector(targetPeerId: string, sector: string) {
+    isHost = false;
+    roomCode = targetPeerId;
+    clientPeer = new Peer();
+
+    clientPeer.on('open', () => {
+        if (statusText) {
+            statusText.innerText = `Connecting to sector ${sector}...`;
+        }
+        const conn = clientPeer.connect(targetPeerId, { reliable: true });
+        hostConnection = conn;
+
+        conn.on('open', () => {
+            if (statusText) {
+                statusText.innerText = `Connected to sector ${sector}. Starting game...`;
+            }
+            startGameAsClient(conn);
+        });
+
+        conn.on('data', (data: any) => {
+            if (window.gameScene && (window.gameScene as any).receiveState) {
+                (window.gameScene as any).receiveState(data);
+            }
+        });
+
+        conn.on('close', () => {
+            if (statusText) {
+                statusText.innerText = `Connection to sector ${sector} was lost.`;
+            }
+            sectorButtons.forEach((button) => {
+                button.disabled = false;
+            });
+        });
+
+        conn.on('error', (err: any) => {
+            if (statusText) {
+                statusText.innerText = `Connection error: ${err.message || 'Unable to join sector'}`;
+            }
+            sectorButtons.forEach((button) => {
+                button.disabled = false;
+            });
+        });
+    });
+
+    clientPeer.on('error', (err: any) => {
+        if (statusText) {
+            statusText.innerText = `Peer error: ${err.message || 'Unable to create client peer'}`;
+        }
+        sectorButtons.forEach((button) => {
+            button.disabled = false;
+        });
+    });
+}
+
 function startGameAsHost() {
-    document.getElementById('lobby-overlay').style.display = 'none';
-    const config = {
+    const lobbyOverlay = document.getElementById('lobby-overlay');
+    if (lobbyOverlay) {
+        lobbyOverlay.style.display = 'none';
+    }
+    const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
         scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container', width: '100%', height: '100%' },
         physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
@@ -812,9 +821,12 @@ function startGameAsHost() {
     new Phaser.Game(config);
 }
 
-function startGameAsClient(conn) {
-    document.getElementById('lobby-overlay').style.display = 'none';
-    const config = {
+function startGameAsClient(conn: any) {
+    const lobbyOverlay = document.getElementById('lobby-overlay');
+    if (lobbyOverlay) {
+        lobbyOverlay.style.display = 'none';
+    }
+    const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
         scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container', width: '100%', height: '100%' },
         physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
@@ -822,3 +834,5 @@ function startGameAsClient(conn) {
     };
     new Phaser.Game(config);
 }
+
+window.synth = synth;
