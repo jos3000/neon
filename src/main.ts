@@ -599,7 +599,7 @@ class MainScene extends Phaser.Scene {
   }
 
   getAlivePlayers() {
-    const alivePlayers = [] as Phaser.Physics.Arcade.Sprite[];
+    const alivePlayers: Phaser.Physics.Arcade.Sprite[] = [];
     if (this.player && this.player.active && !this.player.getData('isDead')) {
       alivePlayers.push(this.player);
     }
