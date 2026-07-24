@@ -109,7 +109,7 @@
             statusText.innerText = 'Creating peer...';
 
             // Create host peer (default PeerJS cloud server)
-            hostPeer = new Peer();
+            hostPeer = new Peer("neon");
 
             hostPeer.on('open', (id) => {
                 roomCode = id;
