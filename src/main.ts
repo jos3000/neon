@@ -123,6 +123,15 @@ class MainScene extends Phaser.Scene {
     bigEnemyGraphics.fillCircle(25, 25, 23);
     bigEnemyGraphics.generateTexture('bigenemy', 50, 50);
 
+    const spawnerGraphics = this.make.graphics({});
+    spawnerGraphics.lineStyle(5, 0xff0055);
+    spawnerGraphics.strokeRect(3, 3, 54, 54);
+    spawnerGraphics.fillStyle(0x440022, 1);
+    spawnerGraphics.fillRect(3, 3, 54, 54);
+    spawnerGraphics.fillStyle(0xff0055, 1);
+    spawnerGraphics.fillRect(20, 20, 20, 20);
+    spawnerGraphics.generateTexture('spawner', 60, 60);
+
     const bulletGraphics = this.make.graphics({});
     bulletGraphics.fillStyle(0xffff00, 1);
     bulletGraphics.fillCircle(8, 8, 8);
@@ -250,15 +259,10 @@ class MainScene extends Phaser.Scene {
 
     if (isHost) {
       this.enemySpeed = 150;
+      this.initSpawners();
       this.spawnTimer = this.time.addEvent({
-        delay: 1000,
-        callback: this.spawnEnemy,
-        callbackScope: this,
-        loop: true,
-      });
-      this.bigSpawnTimer = this.time.addEvent({
-        delay: 6000,
-        callback: this.spawnBigEnemy,
+        delay: 2000,
+        callback: this.spawnEnemiesFromSpawners,
         callbackScope: this,
         loop: true,
       });
@@ -499,6 +503,59 @@ class MainScene extends Phaser.Scene {
     };
   }
 
+  private SPAWNER_CONFIG = [
+    { x: 300, y: 300 },
+    { x: 1700, y: 300 },
+    { x: 300, y: 1700 },
+    { x: 1700, y: 1700 },
+  ];
+
+  initSpawners() {
+    this.SPAWNER_CONFIG.forEach((pos) => {
+      const enemyId = `enemy-${++this.nextEnemyId}`;
+      const spawner = this.enemies.create(pos.x, pos.y, 'spawner');
+      if (spawner) {
+        spawner.setData('syncId', enemyId);
+        spawner.setData('type', 'spawner');
+        spawner.setData('hp', 100);
+        spawner.setImmovable(true);
+        spawner.setCollideWorldBounds(true);
+      }
+    });
+  }
+
+  spawnEnemiesFromSpawners() {
+    if (!this.gameStarted || this.gameOver || this.isPaused) return;
+
+    const spawners: Phaser.GameObjects.Sprite[] = [];
+    this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
+      if (e.active && e.getData('type') === 'spawner') {
+        spawners.push(e);
+      }
+    });
+
+    if (spawners.length === 0) return;
+
+    spawners.forEach((spawner) => {
+      const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+      const spawnX = Phaser.Math.Clamp(spawner.x + Math.cos(angle) * 45, 40, 1960);
+      const spawnY = Phaser.Math.Clamp(spawner.y + Math.sin(angle) * 45, 40, 1960);
+      if (this.isInBaseArea(spawnX, spawnY)) return;
+
+      const isBig = Math.random() < 0.25;
+      const enemyId = `enemy-${++this.nextEnemyId}`;
+      const enemy = this.enemies.create(spawnX, spawnY, isBig ? 'bigenemy' : 'enemy');
+      if (enemy) {
+        enemy.setData('syncId', enemyId);
+        enemy.setData('type', isBig ? 'big' : 'normal');
+        enemy.setData('hp', isBig ? 5 : 1);
+        enemy.setBounce(1);
+        enemy.setCollideWorldBounds(true);
+        if (isHost) this.broadcastEffect(isBig ? 'big-spawn' : 'spawn');
+      }
+    });
+  }
+
   spawnEnemy() {
     if (!this.gameStarted || this.gameOver || this.isPaused) return;
     const spawn = this.getSpawnPointOutsideBase();
@@ -581,7 +638,8 @@ class MainScene extends Phaser.Scene {
     if (hp <= 0) {
       this.broadcastEffect('explosion', enemySprite.x, enemySprite.y);
       enemySprite.destroy();
-      this.score += enemySprite.getData('type') === 'big' ? 50 : 10;
+      const type = enemySprite.getData('type');
+      this.score += type === 'spawner' ? 500 : type === 'big' ? 50 : 10;
       this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
     } else {
       enemySprite.setTint(0xffffff);
@@ -694,7 +752,9 @@ class MainScene extends Phaser.Scene {
     enemies.forEach((enemy) => {
       let sprite = this.enemySprites[enemy.id];
       if (!sprite) {
-        sprite = this.enemies.create(enemy.x, enemy.y, enemy.type === 'big' ? 'bigenemy' : 'enemy');
+        const texture =
+          enemy.type === 'spawner' ? 'spawner' : enemy.type === 'big' ? 'bigenemy' : 'enemy';
+        sprite = this.enemies.create(enemy.x, enemy.y, texture);
         if (!sprite) return;
         sprite.setData('syncId', enemy.id);
       }
@@ -704,7 +764,7 @@ class MainScene extends Phaser.Scene {
       sprite.setVisible(true);
       sprite.setActive(true);
       sprite.setData('type', enemy.type);
-      sprite.setData('hp', enemy.type === 'big' ? 5 : 1);
+      sprite.setData('hp', enemy.type === 'spawner' ? 100 : enemy.type === 'big' ? 5 : 1);
       nextEnemySprites[enemy.id] = sprite;
     });
 
@@ -1012,8 +1072,12 @@ class MainScene extends Phaser.Scene {
       }
 
       const alivePlayers = this.getAlivePlayers();
-      this.enemies.getChildren().forEach((enemy: Phaser.GameObjects.Sprite) => {
+      this.enemies.getChildren().forEach((enemy: Phaser.Physics.Arcade.Sprite) => {
         if (!enemy.active) return;
+        if (enemy.getData('type') === 'spawner') {
+          enemy.setVelocity(0, 0);
+          return;
+        }
 
         let target: Phaser.Physics.Arcade.Sprite | null = null;
         let minDist = Infinity;
