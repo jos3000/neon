@@ -946,7 +946,11 @@ class MainScene extends Phaser.Scene {
 
       if (isShooting) {
         this.player!.rotation = aimAngle;
-        if (!this.isInBaseArea(this.player!.x, this.player!.y) && time > this.lastFired) {
+        if (
+          isHost &&
+          !this.isInBaseArea(this.player!.x, this.player!.y) &&
+          time > this.lastFired
+        ) {
           const bulletId = `bullet-${++this.nextBulletId}`;
           const bullet = this.createBulletSprite(this.player!.x, this.player!.y, bulletId);
           if (bullet) {
