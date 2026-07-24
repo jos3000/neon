@@ -6,6 +6,62 @@ let clientPeer = null;        // client's own Peer instance
 let hostPeer = null;          // host's Peer instance
 let connections = [];         // host side: array of active DataConnections
 
+// Lightweight WebAudio synth for in-game sounds
+class Synth {
+    constructor() {
+        this.ctx = null;
+        this.master = null;
+        this.unlocked = false;
+    }
+
+    init() {
+        if (this.ctx) return;
+        try {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            this.ctx = new AC();
+            this.master = this.ctx.createGain();
+            this.master.gain.value = 0.18;
+            this.master.connect(this.ctx.destination);
+        } catch (e) {
+            console.warn('AudioContext unavailable', e);
+            this.ctx = null;
+        }
+    }
+
+    unlock() {
+        this.init();
+        if (!this.ctx) return;
+        if (this.ctx.state === 'suspended') {
+            this.ctx.resume().then(() => { this.unlocked = true; }).catch(()=>{});
+        } else {
+            this.unlocked = true;
+        }
+    }
+
+    playOsc(type, freq, duration = 0.12, gain = 0.12) {
+        if (!this.ctx || !this.unlocked) return;
+        const now = this.ctx.currentTime;
+        const o = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(freq, now);
+        g.gain.setValueAtTime(gain, now);
+        g.gain.exponentialRampToValueAtTime(0.001, now + duration);
+        o.connect(g); g.connect(this.master);
+        o.start(now);
+        o.stop(now + duration + 0.02);
+    }
+
+    playShot() { this.playOsc('sawtooth', 880, 0.08, 0.08); }
+    playHit() { this.playOsc('square', 420, 0.10, 0.10); }
+    playExplosion() { this.playOsc('sawtooth', 160, 0.28, 0.22); this.playOsc('sine', 260, 0.18, 0.10); }
+    playBigSpawn() { this.playOsc('triangle', 220, 0.36, 0.18); }
+    playDeath() { this.playOsc('sawtooth', 120, 0.6, 0.24); }
+    playTick() { this.playOsc('square', 1200, 0.06, 0.06); }
+    playGo() { this.playOsc('sawtooth', 1400, 0.18, 0.12); }
+}
+
+window.synth = window.synth || new Synth();
 // DOM Elements
 const sectorButtons = Array.from(document.querySelectorAll('.sector-btn'));
 const statusText = document.getElementById('lobby-status');
@@ -248,6 +304,9 @@ class MainScene extends Phaser.Scene {
             loop: true
         });
 
+        // unlock audio on first input (user gesture requirement)
+        this.input.once('pointerdown', () => { if (window.synth) window.synth.unlock(); });
+
         // Input handling (same as original)
         this.input.addPointer(2);
         this.cursors = this.input.keyboard.createCursorKeys();
@@ -363,9 +422,11 @@ class MainScene extends Phaser.Scene {
         this.countdownValue -= 1;
         if (this.countdownValue > 0) {
             this.countdownText.setText(String(this.countdownValue));
+            if (window.synth) window.synth.playTick();
         } else {
             this.countdownText.setText('GO!');
             this.gameStarted = true;
+            if (window.synth) window.synth.playGo();
             this.countdownTimer.remove(false);
             this.time.delayedCall(500, () => {
                 if (this.countdownText && this.countdownText.active) {
@@ -388,6 +449,7 @@ class MainScene extends Phaser.Scene {
             enemy.setData('hp', 1);
             enemy.setBounce(1);
             enemy.setCollideWorldBounds(true);
+            if (window.synth && isHost) window.synth.playHit();
         }
     }
 
@@ -404,6 +466,7 @@ class MainScene extends Phaser.Scene {
             enemy.setData('hp', 5);
             enemy.setBounce(1);
             enemy.setCollideWorldBounds(true);
+            if (window.synth && isHost) window.synth.playBigSpawn();
         }
     }
 
@@ -416,6 +479,7 @@ class MainScene extends Phaser.Scene {
             enemy.destroy();
             this.score += (enemy.getData('type') === 'big' ? 50 : 10);
             this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
+            if (window.synth && isHost) window.synth.playExplosion();
         } else {
             enemy.setTint(0xffffff);
             this.time.delayedCall(50, () => { if (enemy && enemy.active) enemy.clearTint(); });
@@ -446,6 +510,7 @@ class MainScene extends Phaser.Scene {
         player.body.enable = false;
         player.setVisible(false);
         this.emitter.explode(30, player.x, player.y);
+        if (window.synth) window.synth.playDeath();
 
         this.time.delayedCall(5000, () => {
             if (!player || !player.active) return;
@@ -710,6 +775,7 @@ class MainScene extends Phaser.Scene {
                 let mx = rp.getData('moveX') || 0;
                 let my = rp.getData('moveY') || 0;
                 rp.setVelocity(mx * speed, my * speed);
+                                if (window.synth) window.synth.playShot();
 
                 if (mx !== 0 || my !== 0) rp.rotation = Math.atan2(my, mx);
 
@@ -726,6 +792,7 @@ class MainScene extends Phaser.Scene {
                             this.born += d;
                             if (this.born > 1500) this.destroy();
                         };
+                        if (window.synth) window.synth.playShot();
                     }
                     rp.setData('lastFired', time + this.fireRate);
                 }
