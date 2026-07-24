@@ -83,6 +83,8 @@ class MainScene extends Phaser.Scene {
   private localPeerId: string | null = null;
   private hostPlayerSprite?: Phaser.GameObjects.Sprite;
   private otherRemoteSprites: Record<string, Phaser.GameObjects.Sprite> = {};
+  private playerIndicators: Record<string, Phaser.GameObjects.Graphics> = {};
+  private playerColors: Record<string, number> = {};
   private enemySpeed = 150;
   private spawnTimer?: Phaser.Time.TimerEvent;
   private bigSpawnTimer?: Phaser.Time.TimerEvent;
@@ -348,6 +350,116 @@ class MainScene extends Phaser.Scene {
     }
   }
 
+  private getPlayerColor(id: string): number {
+    if (this.playerColors[id] !== undefined) return this.playerColors[id];
+
+    const palette = [0xff5d73, 0x4ecdc4, 0xffd166, 0x6c5ce7, 0x2ec4b6, 0xff8fab, 0x7f5af0];
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+      hash = (hash << 5) - hash + id.charCodeAt(i);
+      hash |= 0;
+    }
+
+    const color = palette[Math.abs(hash) % palette.length];
+    this.playerColors[id] = color;
+    return color;
+  }
+
+  private applyPlayerColor(sprite: Phaser.GameObjects.Sprite, id: string) {
+    const color = this.getPlayerColor(id);
+    sprite.setTint(color);
+    sprite.setData('playerColor', color);
+  }
+
+  private updateOffscreenIndicators() {
+    const camera = this.cameras.main;
+    const viewLeft = camera.scrollX;
+    const viewRight = camera.scrollX + camera.width;
+    const viewTop = camera.scrollY;
+    const viewBottom = camera.scrollY + camera.height;
+    const trackedSprites: Array<{ id: string; sprite: Phaser.GameObjects.Sprite }> = [];
+
+    if (this.hostPlayerSprite) {
+      trackedSprites.push({ id: 'host', sprite: this.hostPlayerSprite });
+    }
+
+    Object.entries(this.otherRemoteSprites).forEach(([id, sprite]) => {
+      trackedSprites.push({ id, sprite });
+    });
+
+    if (isHost) {
+      Object.entries(this.remotePlayers).forEach(([id, sprite]) => {
+        trackedSprites.push({ id: `remote-${id}`, sprite });
+      });
+    }
+
+    trackedSprites.forEach(({ id, sprite }) => {
+      const indicatorId = `indicator-${id}`;
+      if (!this.playerIndicators[indicatorId]) {
+        this.playerIndicators[indicatorId] = this.add
+          .graphics({ x: 0, y: 0 })
+          .setScrollFactor(0)
+          .setDepth(250);
+      }
+      const indicator = this.playerIndicators[indicatorId];
+      const isVisible =
+        sprite.x >= viewLeft &&
+        sprite.x <= viewRight &&
+        sprite.y >= viewTop &&
+        sprite.y <= viewBottom;
+
+      if (isVisible) {
+        indicator.clear();
+        indicator.setVisible(false);
+        return;
+      }
+
+      const screenX = sprite.x - viewLeft;
+      const screenY = sprite.y - viewTop;
+      const centerX = camera.width / 2;
+      const centerY = camera.height / 2;
+      const relX = screenX - centerX;
+      const relY = screenY - centerY;
+      const scale = Math.max(
+        Math.abs(relX) / (camera.width / 2),
+        Math.abs(relY) / (camera.height / 2)
+      );
+      const edgeX = centerX + relX / scale;
+      const edgeY = centerY + relY / scale;
+      const angle = Math.atan2(screenY - edgeY, screenX - edgeX);
+      const pointerSize = 14;
+      const tipX = edgeX;
+      const tipY = edgeY;
+      const baseX = tipX - Math.cos(angle) * pointerSize;
+      const baseY = tipY - Math.sin(angle) * pointerSize;
+      const leftX = baseX + Math.cos(angle + Math.PI / 2) * pointerSize * 0.6;
+      const leftY = baseY + Math.sin(angle + Math.PI / 2) * pointerSize * 0.6;
+      const rightX = baseX + Math.cos(angle - Math.PI / 2) * pointerSize * 0.6;
+      const rightY = baseY + Math.sin(angle - Math.PI / 2) * pointerSize * 0.6;
+      const color = sprite.getData('playerColor') || 0xffffff;
+
+      indicator.clear();
+      indicator.setVisible(true);
+      indicator.lineStyle(2, color, 1);
+      indicator.beginPath();
+      indicator.moveTo(tipX, tipY);
+      indicator.lineTo(leftX, leftY);
+      indicator.lineTo(rightX, rightY);
+      indicator.closePath();
+      indicator.strokePath();
+      indicator.fillStyle(color, 1);
+      indicator.fillPath();
+    });
+
+    Object.keys(this.playerIndicators).forEach((indicatorKey) => {
+      const isTracked = trackedSprites.some(({ id }) => `indicator-${id}` === indicatorKey);
+      if (!isTracked) {
+        this.playerIndicators[indicatorKey].destroy();
+        delete this.playerIndicators[indicatorKey];
+      }
+    });
+  }
+
   spawnEnemy() {
     if (!this.gameStarted || this.gameOver || this.isPaused) return;
     const cam = this.cameras.main;
@@ -506,6 +618,7 @@ class MainScene extends Phaser.Scene {
       const rp = this.physics.add.sprite(1000, 1000, 'guest');
       rp.setCollideWorldBounds(true);
       this.remotePlayers[peerId] = rp;
+      this.applyPlayerColor(rp, peerId);
       this.physics.add.collider(rp, this.enemies, this.hitPlayer, undefined, this);
     }
     const rp = this.remotePlayers[peerId];
@@ -520,6 +633,11 @@ class MainScene extends Phaser.Scene {
     if (this.remotePlayers[peerId]) {
       this.remotePlayers[peerId].destroy();
       delete this.remotePlayers[peerId];
+    }
+    const indicatorKey = `indicator-remote-${peerId}`;
+    if (this.playerIndicators[indicatorKey]) {
+      this.playerIndicators[indicatorKey].destroy();
+      delete this.playerIndicators[indicatorKey];
     }
   }
 
@@ -694,6 +812,7 @@ class MainScene extends Phaser.Scene {
           if (!this.hostPlayerSprite) {
             this.hostPlayerSprite = this.add.sprite(playerState.x, playerState.y, 'player');
             this.hostPlayerSprite.setDepth(2);
+            this.applyPlayerColor(this.hostPlayerSprite, 'host');
           }
           this.hostPlayerSprite.setPosition(playerState.x, playerState.y);
           this.hostPlayerSprite.rotation = playerState.r;
@@ -711,6 +830,7 @@ class MainScene extends Phaser.Scene {
           if (!this.otherRemoteSprites[id]) {
             const spr = this.add.sprite(playerState.x, playerState.y, 'guest');
             spr.setDepth(2);
+            this.applyPlayerColor(spr, id);
             this.otherRemoteSprites[id] = spr;
           }
           this.otherRemoteSprites[id].setPosition(playerState.x, playerState.y);
@@ -723,6 +843,11 @@ class MainScene extends Phaser.Scene {
         if (!data.players[id]) {
           this.otherRemoteSprites[id].destroy();
           delete this.otherRemoteSprites[id];
+          const indicatorKey = `indicator-${id}`;
+          if (this.playerIndicators[indicatorKey]) {
+            this.playerIndicators[indicatorKey].destroy();
+            delete this.playerIndicators[indicatorKey];
+          }
         }
       }
     }
@@ -745,6 +870,8 @@ class MainScene extends Phaser.Scene {
       if (this.isPaused) this.physics.pause();
       else if (!this.gameOver) this.physics.resume();
     }
+
+    this.updateOffscreenIndicators();
 
     if (this.gameOver || this.isPaused || !this.gameStarted) return;
 
