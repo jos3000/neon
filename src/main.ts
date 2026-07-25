@@ -171,7 +171,6 @@ class MainScene extends Phaser.Scene {
 
   private baseGraphics!: Phaser.GameObjects.Graphics;
   private laserGraphics!: Phaser.GameObjects.Graphics;
-  private spawnTimer?: Phaser.Time.TimerEvent;
   private bigSpawnTimer?: Phaser.Time.TimerEvent;
   private broadcastTimer?: Phaser.Time.TimerEvent;
   private inputTimer?: Phaser.Time.TimerEvent;
@@ -397,12 +396,6 @@ class MainScene extends Phaser.Scene {
     if (isHost) {
       this.enemySpeed = 150;
       this.initSpawners();
-      this.spawnTimer = this.time.addEvent({
-        delay: 2000,
-        callback: this.spawnEnemiesFromSpawners,
-        callbackScope: this,
-        loop: true,
-      });
 
       this.physics.add.collider(this.bullets, this.enemies, this.hitEnemy, undefined, this);
       this.physics.add.collider(this.player, this.enemies, this.hitPlayer, undefined, this);
@@ -649,54 +642,86 @@ class MainScene extends Phaser.Scene {
         spawner.setData('syncId', enemyId);
         spawner.setData('type', 'spawner');
         spawner.setData('hp', 100);
+        // Stagger initial spawn times
+        spawner.setData('nextSpawnTime', this.time.now + Phaser.Math.Between(500, 2500));
         spawner.setImmovable(true);
         spawner.setCollideWorldBounds(true);
       }
     });
   }
 
-  spawnEnemiesFromSpawners() {
+  updateSpawners(time: number) {
     if (!this.gameStarted || this.gameOver || this.isPaused) return;
 
     const spawners: Phaser.GameObjects.Sprite[] = [];
+    const enemyCounts: Record<string, number> = {};
+
+    // Map active spawners and count how many enemies belong to each
     this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
-      if (e.active && e.getData('type') === 'spawner') {
+      if (!e.active) return;
+      const type = e.getData('type');
+      if (type === 'spawner') {
         spawners.push(e);
+        if (enemyCounts[e.getData('syncId')] === undefined) {
+          enemyCounts[e.getData('syncId')] = 0;
+        }
+      } else {
+        const spawnerId = e.getData('spawnerId');
+        if (spawnerId) {
+          enemyCounts[spawnerId] = (enemyCounts[spawnerId] || 0) + 1;
+        }
       }
     });
 
-    if (spawners.length === 0) return;
-
     spawners.forEach((spawner) => {
-      const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
-      const spawnX = Phaser.Math.Clamp(spawner.x + Math.cos(angle) * 45, 40, 1960);
-      const spawnY = Phaser.Math.Clamp(spawner.y + Math.sin(angle) * 45, 40, 1960);
-      if (this.isInBaseArea(spawnX, spawnY)) return;
+      const nextSpawnTime = spawner.getData('nextSpawnTime') || 0;
 
-      const rand = Math.random();
-      let enemyType = 'normal';
-      let texture = 'enemy';
-      let hp = 1;
-      if (rand < 0.25) {
-        enemyType = 'big';
-        texture = 'bigenemy';
-        hp = 5;
-      } else if (rand < 0.5) {
-        enemyType = 'laser';
-        texture = 'laserenemy';
-        hp = 3;
-      }
+      if (time > nextSpawnTime) {
+        const spawnerId = spawner.getData('syncId');
+        const currentSpawns = enemyCounts[spawnerId] || 0;
 
-      const enemyId = `enemy-${++this.nextEnemyId}`;
-      const enemy = this.enemies.create(spawnX, spawnY, texture);
-      if (enemy) {
-        enemy.setData('syncId', enemyId);
-        enemy.setData('type', enemyType);
-        enemy.setData('hp', hp);
-        enemy.setData('spawnTime', this.time.now - Phaser.Math.Between(0, 10000));
-        enemy.setBounce(1);
-        enemy.setCollideWorldBounds(true);
-        if (isHost) this.broadcastEffect(enemyType === 'big' ? 'big-spawn' : 'spawn');
+        const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+        const spawnX = Phaser.Math.Clamp(spawner.x + Math.cos(angle) * 45, 40, 1960);
+        const spawnY = Phaser.Math.Clamp(spawner.y + Math.sin(angle) * 45, 40, 1960);
+
+        // Ensure enemies don't spawn inside the safe base
+        if (this.isInBaseArea(spawnX, spawnY)) {
+          spawner.setData('nextSpawnTime', time + 500);
+          return;
+        }
+
+        const rand = Math.random();
+        let enemyType = 'normal';
+        let texture = 'enemy';
+        let hp = 1;
+        if (rand < 0.25) {
+          enemyType = 'big';
+          texture = 'bigenemy';
+          hp = 5;
+        } else if (rand < 0.5) {
+          enemyType = 'laser';
+          texture = 'laserenemy';
+          hp = 3;
+        }
+
+        const enemyId = `enemy-${++this.nextEnemyId}`;
+        const enemy = this.enemies.create(spawnX, spawnY, texture);
+        if (enemy) {
+          enemy.setData('syncId', enemyId);
+          enemy.setData('spawnerId', spawnerId); // Track which spawner made this
+          enemy.setData('type', enemyType);
+          enemy.setData('hp', hp);
+          enemy.setData('spawnTime', this.time.now - Phaser.Math.Between(0, 10000));
+          enemy.setBounce(1);
+          enemy.setCollideWorldBounds(true);
+          if (isHost) this.broadcastEffect(enemyType === 'big' ? 'big-spawn' : 'spawn');
+        }
+
+        // Calculate dynamic delay: faster when fewer, slower when many
+        // E.g., Base: 800ms + 1200ms per existing spawn
+        // 0 spawns = 800ms, 2 spawns = 3.2s, 5 spawns = 6.8s
+        const nextDelay = 800 + currentSpawns * 1200;
+        spawner.setData('nextSpawnTime', time + nextDelay);
       }
     });
   }
@@ -1217,6 +1242,9 @@ class MainScene extends Phaser.Scene {
     }
 
     if (isHost) {
+      // Dynamic Spawner Loop Replaces the fixed timer
+      this.updateSpawners(time);
+
       const speed = 350;
       for (const id in this.remotePlayers) {
         const rp = this.remotePlayers[id];
