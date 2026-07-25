@@ -62,7 +62,7 @@ type SectorConfig = {
 };
 
 const SECTORS: Record<string, SectorConfig> = {
-  '1': {
+  '0': {
     // Crossroads
     baseCenter: { x: 1000, y: 1000 },
     baseRadius: 180,
@@ -87,7 +87,7 @@ const SECTORS: Record<string, SectorConfig> = {
       { x: 1400, y: 1400, w: 60, h: 200 },
     ],
   },
-  '2': {
+  '1': {
     // Twin Forts
     baseCenter: { x: 500, y: 1000 },
     baseRadius: 200,
@@ -104,7 +104,7 @@ const SECTORS: Record<string, SectorConfig> = {
       { x: 500, y: 200, w: 600, h: 80 },
     ],
   },
-  '3': {
+  '2': {
     // The Maze
     baseCenter: { x: 1000, y: 1700 },
     baseRadius: 160,
