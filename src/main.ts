@@ -52,6 +52,75 @@ type PeerEffectMessage = {
 
 type PeerMessage = PeerSnapshotMessage | PeerInputMessage | PeerEffectMessage;
 
+type WallConfig = { x: number; y: number; w: number; h: number };
+
+type SectorConfig = {
+  baseCenter: { x: number; y: number };
+  baseRadius: number;
+  spawners: { x: number; y: number }[];
+  walls: WallConfig[];
+};
+
+const SECTORS: Record<string, SectorConfig> = {
+  '1': {
+    // Crossroads
+    baseCenter: { x: 1000, y: 1000 },
+    baseRadius: 180,
+    spawners: [
+      { x: 300, y: 300 },
+      { x: 1700, y: 300 },
+      { x: 300, y: 1700 },
+      { x: 1700, y: 1700 },
+    ],
+    walls: [
+      { x: 1000, y: 350, w: 400, h: 80 },
+      { x: 1000, y: 1650, w: 400, h: 80 },
+      { x: 350, y: 1000, w: 80, h: 400 },
+      { x: 1650, y: 1000, w: 80, h: 400 },
+      { x: 600, y: 600, w: 200, h: 60 },
+      { x: 600, y: 600, w: 60, h: 200 },
+      { x: 1400, y: 600, w: 200, h: 60 },
+      { x: 1400, y: 600, w: 60, h: 200 },
+      { x: 600, y: 1400, w: 200, h: 60 },
+      { x: 600, y: 1400, w: 60, h: 200 },
+      { x: 1400, y: 1400, w: 200, h: 60 },
+      { x: 1400, y: 1400, w: 60, h: 200 },
+    ],
+  },
+  '2': {
+    // Twin Forts
+    baseCenter: { x: 500, y: 1000 },
+    baseRadius: 200,
+    spawners: [
+      { x: 1500, y: 300 },
+      { x: 1800, y: 1000 },
+      { x: 1500, y: 1700 },
+    ],
+    walls: [
+      { x: 1000, y: 400, w: 100, h: 800 },
+      { x: 1000, y: 1600, w: 100, h: 800 },
+      { x: 1400, y: 1000, w: 100, h: 600 },
+      { x: 500, y: 1800, w: 600, h: 80 },
+      { x: 500, y: 200, w: 600, h: 80 },
+    ],
+  },
+  '3': {
+    // The Maze
+    baseCenter: { x: 1000, y: 1700 },
+    baseRadius: 160,
+    spawners: [
+      { x: 200, y: 200 },
+      { x: 1000, y: 200 },
+      { x: 1800, y: 200 },
+    ],
+    walls: [
+      { x: 800, y: 1300, w: 1600, h: 80 },
+      { x: 1200, y: 900, w: 1600, h: 80 },
+      { x: 800, y: 500, w: 1600, h: 80 },
+    ],
+  },
+};
+
 class MainScene extends Phaser.Scene {
   private score = 0;
   private gameOver = false;
@@ -59,21 +128,27 @@ class MainScene extends Phaser.Scene {
   private lastFired = 0;
   private fireRate = 120;
   private gameStarted = true;
+
   private player: Phaser.Physics.Arcade.Sprite | null = null;
   private remotePlayers: Record<string, Phaser.Physics.Arcade.Sprite> = {};
   private bullets!: Phaser.Physics.Arcade.Group;
   private enemies!: Phaser.Physics.Arcade.Group;
+  private walls!: Phaser.Physics.Arcade.StaticGroup;
+
   private enemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
   private bulletSprites: Record<string, Phaser.GameObjects.Sprite> = {};
   private nextEnemyId = 0;
   private nextBulletId = 0;
+
   private emitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private scoreText!: Phaser.GameObjects.Text;
   private pauseText!: Phaser.GameObjects.Text;
   private gameOverText!: Phaser.GameObjects.Text;
+
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<string, Phaser.Input.Keyboard.Key>;
   private keyP!: Phaser.Input.Keyboard.Key;
+
   private joyLeftBase!: Phaser.GameObjects.Arc;
   private joyLeftThumb!: Phaser.GameObjects.Arc;
   private joyRightBase!: Phaser.GameObjects.Arc;
@@ -82,14 +157,18 @@ class MainScene extends Phaser.Scene {
   private rightPointer: Phaser.Input.Pointer | null = null;
   private leftVector: { x: number; y: number } | null = null;
   private rightVector: { angle: number; force: number } | null = null;
+
   private localPeerId: string | null = null;
   private hostPlayerSprite?: Phaser.GameObjects.Sprite;
   private otherRemoteSprites: Record<string, Phaser.GameObjects.Sprite> = {};
   private playerIndicators: Record<string, Phaser.GameObjects.Graphics> = {};
   private playerColors: Record<string, number> = {};
+
   private enemySpeed = 150;
   private baseCenter = { x: 1000, y: 1600 };
   private baseRadius = 180;
+  private SPAWNER_CONFIG: { x: number; y: number }[] = [];
+
   private baseGraphics!: Phaser.GameObjects.Graphics;
   private laserGraphics!: Phaser.GameObjects.Graphics;
   private spawnTimer?: Phaser.Time.TimerEvent;
@@ -164,14 +243,39 @@ class MainScene extends Phaser.Scene {
     particleGraphics.fillStyle(0x00ffff, 1);
     particleGraphics.fillRect(0, 0, 4, 4);
     particleGraphics.generateTexture('particle', 4, 4);
+
+    const wallGraphics = this.make.graphics({});
+    wallGraphics.fillStyle(0x001a33, 1);
+    wallGraphics.fillRect(0, 0, 64, 64);
+    wallGraphics.lineStyle(2, 0x00ffff, 0.8);
+    wallGraphics.strokeRect(0, 0, 64, 64);
+    wallGraphics.lineStyle(1, 0x0088cc, 0.3);
+    wallGraphics.moveTo(0, 0);
+    wallGraphics.lineTo(64, 64);
+    wallGraphics.moveTo(64, 0);
+    wallGraphics.lineTo(0, 64);
+    wallGraphics.generateTexture('wall', 64, 64);
   }
 
   create() {
     gameScene = this;
+    const sectorConf = SECTORS[currentSectorId] || SECTORS['1'];
+
+    this.baseCenter = sectorConf.baseCenter;
+    this.baseRadius = sectorConf.baseRadius;
+    this.SPAWNER_CONFIG = sectorConf.spawners;
 
     this.physics.world.setBounds(0, 0, 2000, 2000);
     this.cameras.main.setBounds(0, 0, 2000, 2000);
     this.add.tileSprite(1000, 1000, 2000, 2000, 'grid');
+
+    // Build Walls
+    this.walls = this.physics.add.staticGroup();
+    sectorConf.walls.forEach((w) => {
+      const wall = this.add.tileSprite(w.x, w.y, w.w, w.h, 'wall');
+      this.physics.add.existing(wall, true);
+      this.walls.add(wall);
+    });
 
     this.baseGraphics = this.add.graphics();
     this.baseGraphics.fillStyle(0x00ffcc, 0.16);
@@ -201,6 +305,10 @@ class MainScene extends Phaser.Scene {
     this.bullets = this.physics.add.group({ runChildUpdate: true });
     this.enemies = this.physics.add.group();
 
+    // Core Colliders
+    this.physics.add.collider(this.player, this.walls);
+    this.physics.add.collider(this.bullets, this.walls, this.hitWall, undefined, this);
+
     this.emitter = this.add.particles(0, 0, 'particle', {
       speed: { min: 50, max: 200 },
       angle: { min: 0, max: 360 },
@@ -211,11 +319,19 @@ class MainScene extends Phaser.Scene {
     });
 
     this.scoreText = this.add
-      .text(20, 20, 'SCORE: 0 | ROLE: ' + (isHost ? 'HOST (' + roomCode + ')' : 'CLIENT'), {
-        fontSize: '20px',
-        fontFamily: 'Courier',
-        fontStyle: 'bold',
-      })
+      .text(
+        20,
+        20,
+        'SCORE: 0 | SECTOR: ' +
+          currentSectorId +
+          ' | ROLE: ' +
+          (isHost ? 'HOST (' + roomCode + ')' : 'CLIENT'),
+        {
+          fontSize: '20px',
+          fontFamily: 'Courier',
+          fontStyle: 'bold',
+        }
+      )
       .setScrollFactor(0)
       .setDepth(300);
 
@@ -290,6 +406,7 @@ class MainScene extends Phaser.Scene {
 
       this.physics.add.collider(this.bullets, this.enemies, this.hitEnemy, undefined, this);
       this.physics.add.collider(this.player, this.enemies, this.hitPlayer, undefined, this);
+      this.physics.add.collider(this.enemies, this.walls);
 
       this.broadcastTimer = this.time.addEvent({
         delay: 50,
@@ -524,13 +641,6 @@ class MainScene extends Phaser.Scene {
     };
   }
 
-  private SPAWNER_CONFIG = [
-    { x: 300, y: 300 },
-    { x: 1700, y: 300 },
-    { x: 300, y: 1700 },
-    { x: 1700, y: 1700 },
-  ];
-
   initSpawners() {
     this.SPAWNER_CONFIG.forEach((pos) => {
       const enemyId = `enemy-${++this.nextEnemyId}`;
@@ -681,6 +791,15 @@ class MainScene extends Phaser.Scene {
     if (synth) synth.playExplosion();
   }
 
+  hitWall(
+    bullet: Phaser.Types.Physics.Arcade.GameObjectWithBody,
+    wall: Phaser.Types.Physics.Arcade.GameObjectWithBody
+  ) {
+    const bulletSprite = bullet as Phaser.GameObjects.Sprite;
+    this.emitter.explode(4, bulletSprite.x, bulletSprite.y);
+    bulletSprite.destroy();
+  }
+
   hitEnemy(
     bullet: Phaser.Types.Physics.Arcade.GameObjectWithBody,
     enemy: Phaser.Types.Physics.Arcade.GameObjectWithBody
@@ -693,8 +812,7 @@ class MainScene extends Phaser.Scene {
       this.broadcastEffect('explosion', enemySprite.x, enemySprite.y);
       enemySprite.destroy();
       const type = enemySprite.getData('type');
-      this.score +=
-        type === 'spawner' ? 500 : type === 'big' ? 50 : type === 'laser' ? 25 : 10;
+      this.score += type === 'spawner' ? 500 : type === 'big' ? 50 : type === 'laser' ? 25 : 10;
       this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
     } else {
       enemySprite.setTintFill(0xffffff);
@@ -765,6 +883,7 @@ class MainScene extends Phaser.Scene {
       this.remotePlayers[peerId] = rp;
       this.applyPlayerColor(rp, peerId);
       this.physics.add.collider(rp, this.enemies, this.hitPlayer, undefined, this);
+      this.physics.add.collider(rp, this.walls);
     }
     const rp = this.remotePlayers[peerId];
     rp.setData('moveX', data.moveX || 0);
@@ -813,10 +932,10 @@ class MainScene extends Phaser.Scene {
           enemy.type === 'spawner'
             ? 'spawner'
             : enemy.type === 'big'
-            ? 'bigenemy'
-            : enemy.type === 'laser'
-            ? 'laserenemy'
-            : 'enemy';
+              ? 'bigenemy'
+              : enemy.type === 'laser'
+                ? 'laserenemy'
+                : 'enemy';
         sprite = this.enemies.create(enemy.x, enemy.y, texture);
         if (!sprite) return;
         sprite.setData('syncId', enemy.id);
@@ -1076,11 +1195,7 @@ class MainScene extends Phaser.Scene {
 
       if (isShooting) {
         this.player!.rotation = aimAngle;
-        if (
-          isHost &&
-          !this.isInBaseArea(this.player!.x, this.player!.y) &&
-          time > this.lastFired
-        ) {
+        if (isHost && !this.isInBaseArea(this.player!.x, this.player!.y) && time > this.lastFired) {
           const bulletId = `bullet-${++this.nextBulletId}`;
           const bullet = this.createBulletSprite(this.player!.x, this.player!.y, bulletId);
           if (bullet) {
@@ -1169,7 +1284,7 @@ class MainScene extends Phaser.Scene {
           const cycleTime = (time - spawnTime) % 10000;
 
           if (cycleTime >= 8800 && cycleTime < 9800) {
-            // Charging phase (1s duration: 8800ms - 9800ms)
+            // Charging phase
             if (enemy.getData('laserState') !== 'charging') {
               enemy.setData('laserState', 'charging');
               let angle = enemy.rotation;
@@ -1181,7 +1296,7 @@ class MainScene extends Phaser.Scene {
             enemy.setVelocity(0, 0);
             enemy.rotation = enemy.getData('laserAngle') as number;
           } else if (cycleTime >= 9800) {
-            // Firing phase (200ms duration: 9800ms - 10000ms)
+            // Firing phase
             if (enemy.getData('laserState') !== 'firing') {
               enemy.setData('laserState', 'firing');
               this.broadcastEffect('laser', enemy.x, enemy.y);
@@ -1255,6 +1370,7 @@ class MainScene extends Phaser.Scene {
           return;
         }
 
+        // Standard Enemy Handling
         if (this.isInBaseArea(enemy.x, enemy.y)) {
           const angle = Phaser.Math.Angle.Between(
             this.baseCenter.x,
@@ -1308,6 +1424,7 @@ class MainScene extends Phaser.Scene {
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
 
+    // 1. Raycast vs Base Circle (Quadratic intersect)
     const b = 2 * (dx * cos + dy * sin);
     const c = dx * dx + dy * dy - r * r;
     const disc = b * b - 4 * c;
@@ -1316,7 +1433,6 @@ class MainScene extends Phaser.Scene {
       const sqrtDisc = Math.sqrt(disc);
       const t1 = (-b - sqrtDisc) / 2;
       const t2 = (-b + sqrtDisc) / 2;
-
       if (t1 > 0 && t1 < maxDist) {
         maxDist = t1;
       } else if (t2 > 0 && t2 < maxDist) {
@@ -1324,9 +1440,31 @@ class MainScene extends Phaser.Scene {
       }
     }
 
+    // 2. Raycast vs Walls (AABB intersects)
+    if (this.walls) {
+      const rayLine = new Phaser.Geom.Line(x, y, x + cos * maxDist, y + sin * maxDist);
+      const walls = this.walls.getChildren();
+
+      walls.forEach((wallObj) => {
+        const wall = wallObj as Phaser.GameObjects.TileSprite;
+        const body = wall.body as Phaser.Physics.Arcade.Body;
+        if (body) {
+          const rect = new Phaser.Geom.Rectangle(body.x, body.y, body.width, body.height);
+          const intersects = Phaser.Geom.Intersects.GetLineToRectangle(rayLine, rect);
+
+          intersects.forEach((pt: Phaser.Geom.Point) => {
+            const dist = Phaser.Math.Distance.Between(x, y, pt.x, pt.y);
+            if (dist < maxDist) {
+              maxDist = dist;
+            }
+          });
+        }
+      });
+    }
+
     return {
-      x: x + cos * maxDist,
-      y: y + sin * maxDist,
+      x: x + Math.cos(angle) * maxDist,
+      y: y + Math.sin(angle) * maxDist,
     };
   }
 
@@ -1353,12 +1491,7 @@ class MainScene extends Phaser.Scene {
     if (!this.laserGraphics) return;
     this.laserGraphics.clear();
 
-    const activeEnemies: Array<{
-      x: number;
-      y: number;
-      state?: string;
-      angle?: number;
-    }> = [];
+    const activeEnemies: Array<{ x: number; y: number; state?: string; angle?: number }> = [];
 
     if (isHost) {
       this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
@@ -1405,6 +1538,7 @@ class MainScene extends Phaser.Scene {
 }
 
 let isHost = false;
+let currentSectorId = '1';
 let roomCode: string | null = null;
 let hostConnection: DataConnection | null = null;
 let clientPeer: Peer | null = null;
@@ -1426,6 +1560,7 @@ sectorButtons.forEach((button) => {
 
 function selectSector(sector: string) {
   const targetPeerId = `neon-sector-${sector}`;
+  currentSectorId = sector;
 
   sectorButtons.forEach((button: HTMLButtonElement) => {
     button.disabled = true;
@@ -1514,6 +1649,7 @@ function selectSector(sector: string) {
 function joinSector(targetPeerId: string, sector: string) {
   isHost = false;
   roomCode = targetPeerId;
+  currentSectorId = sector;
   clientPeer = new Peer();
 
   clientPeer.on('open', () => {
