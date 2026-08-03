@@ -164,16 +164,12 @@ class MainScene extends Phaser.Scene {
   private playerIndicators: Record<string, Phaser.GameObjects.Graphics> = {};
   private playerColors: Record<string, number> = {};
 
-  private enemySpeed = 150;
   private baseCenter = { x: 1000, y: 1600 };
   private baseRadius = 180;
   private SPAWNER_CONFIG: { x: number; y: number }[] = [];
 
   private baseGraphics!: Phaser.GameObjects.Graphics;
   private laserGraphics!: Phaser.GameObjects.Graphics;
-  private bigSpawnTimer?: Phaser.Time.TimerEvent;
-  private broadcastTimer?: Phaser.Time.TimerEvent;
-  private inputTimer?: Phaser.Time.TimerEvent;
 
   constructor() {
     super({ key: 'MainScene' });
