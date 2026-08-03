@@ -419,6 +419,91 @@ class MainScene extends Phaser.Scene {
     this.scale.on('resize', this.resize, this);
   }
 
+  private getPrimaryGamepad(): Gamepad | null {
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) return null;
+    const pads = navigator.getGamepads();
+    for (const pad of pads) {
+      if (pad && pad.connected) return pad;
+    }
+    return null;
+  }
+
+  private getStickVector(x: number, y: number): { x: number; y: number; force: number } | null {
+    const magnitude = Math.sqrt(x * x + y * y);
+    if (magnitude < 0.15) return null;
+    return {
+      x: x / magnitude,
+      y: y / magnitude,
+      force: magnitude,
+    };
+  }
+
+  private getGamepadMovement(): { x: number; y: number } | null {
+    const gamepad = this.getPrimaryGamepad();
+    if (!gamepad) return null;
+    const stick = this.getStickVector(gamepad.axes[0] ?? 0, gamepad.axes[1] ?? 0);
+    if (!stick) return null;
+    return { x: stick.x, y: stick.y };
+  }
+
+  private getGamepadAim(): { angle: number; force: number } | null {
+    const gamepad = this.getPrimaryGamepad();
+    if (!gamepad) return null;
+    const stick = this.getStickVector(gamepad.axes[2] ?? 0, gamepad.axes[3] ?? 0);
+    if (!stick) return null;
+    return { angle: Math.atan2(stick.y, stick.x), force: stick.force };
+  }
+
+  private getMovementInput(): { x: number; y: number } {
+    if (this.leftVector) {
+      return { x: this.leftVector.x, y: this.leftVector.y };
+    }
+
+    const gamepadMove = this.getGamepadMovement();
+    if (gamepadMove) {
+      return gamepadMove;
+    }
+
+    let moveX = 0;
+    let moveY = 0;
+    if (this.cursors.left.isDown || this.wasd.A.isDown) moveX = -1;
+    if (this.cursors.right.isDown || this.wasd.D.isDown) moveX = 1;
+    if (this.cursors.up.isDown || this.wasd.W.isDown) moveY = -1;
+    if (this.cursors.down.isDown || this.wasd.S.isDown) moveY = 1;
+    if (moveX !== 0 && moveY !== 0) {
+      const len = Math.sqrt(moveX * moveX + moveY * moveY);
+      moveX /= len;
+      moveY /= len;
+    }
+
+    return { x: moveX, y: moveY };
+  }
+
+  private getShootInput(): { shoot: boolean; angle: number } {
+    if (this.rightVector && this.rightVector.force > 0.2) {
+      return { shoot: true, angle: this.rightVector.angle };
+    }
+
+    const gamepadAim = this.getGamepadAim();
+    if (gamepadAim && gamepadAim.force > 0.2) {
+      return { shoot: true, angle: gamepadAim.angle };
+    }
+
+    if (this.input.activePointer.isDown && !this.leftPointer && !this.rightPointer) {
+      return {
+        shoot: true,
+        angle: Phaser.Math.Angle.Between(
+          this.player!.x,
+          this.player!.y,
+          this.input.activePointer.worldX,
+          this.input.activePointer.worldY
+        ),
+      };
+    }
+
+    return { shoot: false, angle: 0 };
+  }
+
   handlePointerDown(pointer: Phaser.Input.Pointer) {
     if (this.gameOver) {
       if (isHost) this.scene.restart();
@@ -1067,38 +1152,15 @@ class MainScene extends Phaser.Scene {
     if (isHost) return;
     if (!hostConnection || !hostConnection.open) return;
 
-    let moveX = 0;
-    let moveY = 0;
-    if (this.leftVector) {
-      moveX = this.leftVector.x;
-      moveY = this.leftVector.y;
-    } else {
-      if (this.cursors.left.isDown || this.wasd.A.isDown) moveX = -1;
-      if (this.cursors.right.isDown || this.wasd.D.isDown) moveX = 1;
-      if (this.cursors.up.isDown || this.wasd.W.isDown) moveY = -1;
-      if (this.cursors.down.isDown || this.wasd.S.isDown) moveY = 1;
-    }
-    let shoot = false;
-    let aimAngle = 0;
-    if (this.rightVector && this.rightVector.force > 0.2) {
-      shoot = true;
-      aimAngle = this.rightVector.angle;
-    } else if (this.input!.activePointer.isDown && !this.leftPointer && !this.rightPointer) {
-      shoot = true;
-      aimAngle = Phaser.Math.Angle.Between(
-        this.player!.x,
-        this.player!.y,
-        this.input!.activePointer.worldX,
-        this.input!.activePointer.worldY
-      );
-    }
+    const movement = this.getMovementInput();
+    const shootInput = this.getShootInput();
 
     hostConnection.send({
       type: 'input',
-      moveX,
-      moveY,
-      shoot,
-      aimAngle,
+      moveX: movement.x,
+      moveY: movement.y,
+      shoot: shootInput.shoot,
+      aimAngle: shootInput.angle,
     });
   }
 
@@ -1182,54 +1244,28 @@ class MainScene extends Phaser.Scene {
 
     if (this.gameOver || this.isPaused || !this.gameStarted) return;
 
-    let moveX = 0;
-    let moveY = 0;
     if (!this.player!.getData('isDead')) {
-      if (this.leftVector) {
-        moveX = this.leftVector.x;
-        moveY = this.leftVector.y;
-      } else {
-        if (this.cursors.left.isDown || this.wasd.A.isDown) moveX = -1;
-        if (this.cursors.right.isDown || this.wasd.D.isDown) moveX = 1;
-        if (this.cursors.up.isDown || this.wasd.W.isDown) moveY = -1;
-        if (this.cursors.down.isDown || this.wasd.S.isDown) moveY = 1;
-        if (moveX !== 0 && moveY !== 0) {
-          const len = Math.sqrt(moveX * moveX + moveY * moveY);
-          moveX /= len;
-          moveY /= len;
-        }
-      }
+      const movement = this.getMovementInput();
+      const moveX = movement.x;
+      const moveY = movement.y;
 
       const speed = 350;
       this.player!.setVelocity(moveX * speed, moveY * speed);
 
-      let isShooting = false;
-      let aimAngle = 0;
-      if (this.rightVector && this.rightVector.force > 0.2) {
-        isShooting = true;
-        aimAngle = this.rightVector.angle;
-      } else if (this.input!.activePointer.isDown && !this.leftPointer && !this.rightPointer) {
-        isShooting = true;
-        aimAngle = Phaser.Math.Angle.Between(
-          this.player!.x,
-          this.player!.y,
-          this.input!.activePointer.worldX,
-          this.input!.activePointer.worldY
-        );
-      }
+      const shootInput = this.getShootInput();
 
-      if (isShooting) {
-        this.player!.rotation = aimAngle;
+      if (shootInput.shoot) {
+        this.player!.rotation = shootInput.angle;
         if (isHost && !this.isInBaseArea(this.player!.x, this.player!.y) && time > this.lastFired) {
           const bulletId = `bullet-${++this.nextBulletId}`;
           const bullet = this.createBulletSprite(this.player!.x, this.player!.y, bulletId);
           if (bullet) {
             this.physics.velocityFromRotation(
-              aimAngle,
+              shootInput.angle,
               1000,
               bullet.body.velocity as Phaser.Math.Vector2
             );
-            bullet.rotation = aimAngle;
+            bullet.rotation = shootInput.angle;
             this.broadcastEffect('shot');
           }
           this.lastFired = time + this.fireRate;
