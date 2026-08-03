@@ -3,6 +3,16 @@
 import Phaser from 'phaser';
 import Peer, { DataConnection, PeerError } from 'peerjs';
 import { Synth } from './Synth';
+import type { Map as GameMap } from './types/Map';
+import type { Mission as GameMission } from './types/Mission';
+import { relayRush } from './data/missions/relay-rush';
+import { phaseShift } from './data/missions/phase-shift';
+import { echoGrid } from './data/maps/echo-grid';
+import { emberCorridor } from './data/maps/ember-corridor';
+import { harborOfStatic } from './data/maps/harbor-of-static';
+import { solarRuins } from './data/maps/solar-ruins';
+import { blackoutAbyss } from './data/maps/blackout-abyss';
+import { quantumEcho } from './data/maps/quantum-echo';
 
 type PlayerSnapshot = {
   x: number;
@@ -54,71 +64,41 @@ type PeerMessage = PeerSnapshotMessage | PeerInputMessage | PeerEffectMessage;
 
 type WallConfig = { x: number; y: number; w: number; h: number };
 
-type SectorConfig = {
+type MissionConfig = {
+  id: string;
+  name: string;
   baseCenter: { x: number; y: number };
   baseRadius: number;
   spawners: { x: number; y: number }[];
   walls: WallConfig[];
+  mapIds: string[];
 };
 
-const SECTORS: Record<string, SectorConfig> = {
-  '0': {
-    // Crossroads
-    baseCenter: { x: 1000, y: 1000 },
-    baseRadius: 180,
-    spawners: [
-      { x: 300, y: 300 },
-      { x: 1700, y: 300 },
-      { x: 300, y: 1700 },
-      { x: 1700, y: 1700 },
-    ],
-    walls: [
-      { x: 1000, y: 350, w: 400, h: 80 },
-      { x: 1000, y: 1650, w: 400, h: 80 },
-      { x: 350, y: 1000, w: 80, h: 400 },
-      { x: 1650, y: 1000, w: 80, h: 400 },
-      { x: 600, y: 600, w: 200, h: 60 },
-      { x: 600, y: 600, w: 60, h: 200 },
-      { x: 1400, y: 600, w: 200, h: 60 },
-      { x: 1400, y: 600, w: 60, h: 200 },
-      { x: 600, y: 1400, w: 200, h: 60 },
-      { x: 600, y: 1400, w: 60, h: 200 },
-      { x: 1400, y: 1400, w: 200, h: 60 },
-      { x: 1400, y: 1400, w: 60, h: 200 },
-    ],
-  },
-  '1': {
-    // Twin Forts
-    baseCenter: { x: 500, y: 1000 },
-    baseRadius: 200,
-    spawners: [
-      { x: 1500, y: 300 },
-      { x: 1800, y: 1000 },
-      { x: 1500, y: 1700 },
-    ],
-    walls: [
-      { x: 1000, y: 400, w: 100, h: 800 },
-      { x: 1000, y: 1600, w: 100, h: 800 },
-      { x: 1400, y: 1000, w: 100, h: 600 },
-      { x: 500, y: 1800, w: 600, h: 80 },
-      { x: 500, y: 200, w: 600, h: 80 },
-    ],
-  },
-  '2': {
-    // The Maze
-    baseCenter: { x: 1000, y: 1700 },
-    baseRadius: 160,
-    spawners: [
-      { x: 200, y: 200 },
-      { x: 1000, y: 200 },
-      { x: 1800, y: 200 },
-    ],
-    walls: [
-      { x: 800, y: 1300, w: 1600, h: 80 },
-      { x: 1200, y: 900, w: 1600, h: 80 },
-      { x: 800, y: 500, w: 1600, h: 80 },
-    ],
-  },
+const mapLookup: Record<string, GameMap> = {
+  'echo-grid': echoGrid,
+  'ember-corridor': emberCorridor,
+  'harbor-of-static': harborOfStatic,
+  'solar-ruins': solarRuins,
+  'blackout-abyss': blackoutAbyss,
+  'quantum-echo': quantumEcho,
+};
+
+function buildMissionConfig(mission: GameMission): MissionConfig {
+  const primaryMap = mapLookup[mission.maps[0]] ?? echoGrid;
+  return {
+    id: mission.id,
+    name: mission.name,
+    baseCenter: { x: primaryMap.width / 2, y: primaryMap.height / 2 },
+    baseRadius: Math.max(120, Math.min(primaryMap.width, primaryMap.height) * 0.2),
+    spawners: primaryMap.enemies.map((enemy) => ({ x: enemy.x, y: enemy.y })),
+    walls: primaryMap.walls.map((wall) => ({ ...wall })),
+    mapIds: mission.maps,
+  };
+}
+
+const MISSION_CONFIGS: Record<string, MissionConfig> = {
+  [relayRush.id]: buildMissionConfig(relayRush),
+  [phaseShift.id]: buildMissionConfig(phaseShift),
 };
 
 class MainScene extends Phaser.Scene {
@@ -257,11 +237,11 @@ class MainScene extends Phaser.Scene {
 
   create() {
     gameScene = this;
-    const sectorConf = SECTORS[currentSectorId] || SECTORS['1'];
+    const missionConf = MISSION_CONFIGS[currentMissionId] || MISSION_CONFIGS[relayRush.id];
 
-    this.baseCenter = sectorConf.baseCenter;
-    this.baseRadius = sectorConf.baseRadius;
-    this.SPAWNER_CONFIG = sectorConf.spawners;
+    this.baseCenter = missionConf.baseCenter;
+    this.baseRadius = missionConf.baseRadius;
+    this.SPAWNER_CONFIG = missionConf.spawners;
 
     this.physics.world.setBounds(0, 0, 2000, 2000);
     this.cameras.main.setBounds(0, 0, 2000, 2000);
@@ -269,7 +249,7 @@ class MainScene extends Phaser.Scene {
 
     // Build Walls
     this.walls = this.physics.add.staticGroup();
-    sectorConf.walls.forEach((w) => {
+    missionConf.walls.forEach((w) => {
       const wall = this.add.tileSprite(w.x, w.y, w.w, w.h, 'wall');
       this.physics.add.existing(wall, true);
       this.walls.add(wall);
@@ -320,8 +300,8 @@ class MainScene extends Phaser.Scene {
       .text(
         20,
         20,
-        'SCORE: 0 | SECTOR: ' +
-          currentSectorId +
+        'SCORE: 0 | MISSION: ' +
+          missionConf.name +
           ' | ROLE: ' +
           (isHost ? 'HOST (' + roomCode + ')' : 'CLIENT'),
         {
@@ -1601,7 +1581,7 @@ class MainScene extends Phaser.Scene {
 }
 
 let isHost = false;
-let currentSectorId = '1';
+let currentMissionId = relayRush.id;
 let roomCode: string | null = null;
 let hostConnection: DataConnection | null = null;
 let clientPeer: Peer | null = null;
@@ -1610,26 +1590,37 @@ let connections: DataConnection[] = [];
 let gameScene: MainScene | null = null;
 
 const synth: Synth | null = new Synth();
-const sectorButtons = Array.from(document.querySelectorAll<HTMLElement>('.sector-btn'));
 const statusText = document.getElementById('lobby-status');
 
-sectorButtons.forEach((button) => {
-  button.addEventListener('click', () => {
-    const sector = button.getAttribute('data-sector');
-    if (!sector) return;
-    selectSector(sector);
+function buildMissionButtons() {
+  const container = document.getElementById('mission-buttons');
+  if (!container) return;
+
+  container.innerHTML = '';
+  Object.values(MISSION_CONFIGS).forEach((missionConfig) => {
+    const button = document.createElement('button');
+    button.className = 'sector-btn mission-btn';
+    button.type = 'button';
+    button.textContent = missionConfig.name.toUpperCase();
+    button.dataset.mission = missionConfig.id;
+    button.addEventListener('click', () => selectMission(missionConfig.id));
+    container.appendChild(button);
   });
-});
+}
 
-function selectSector(sector: string) {
-  const targetPeerId = `neon-sector-${sector}`;
-  currentSectorId = sector;
+buildMissionButtons();
 
-  sectorButtons.forEach((button: HTMLButtonElement) => {
+function selectMission(missionId: string) {
+  const missionConfig = MISSION_CONFIGS[missionId] || MISSION_CONFIGS[relayRush.id];
+  const targetPeerId = `neon-mission-${missionConfig.id}`;
+  currentMissionId = missionConfig.id;
+
+  const missionButtons = Array.from(document.querySelectorAll<HTMLElement>('.mission-btn'));
+  missionButtons.forEach((button: HTMLButtonElement) => {
     button.disabled = true;
   });
   if (statusText) {
-    statusText.innerText = `Preparing sector ${sector}...`;
+    statusText.innerText = `Preparing mission ${missionConfig.name}...`;
   }
 
   roomCode = targetPeerId;
@@ -1650,7 +1641,7 @@ function selectSector(sector: string) {
   hostPeer.on('open', () => {
     isHost = true;
     if (statusText) {
-      statusText.innerText = `Sector ${sector} host ready. Peer ID: ${targetPeerId}`;
+      statusText.innerText = `Mission ${missionConfig.name} host ready. Peer ID: ${targetPeerId}`;
     }
     startGameAsHost();
   });
@@ -1694,37 +1685,38 @@ function selectSector(sector: string) {
         hostPeer = null;
       }
       if (statusText) {
-        statusText.innerText = `Sector ${sector} is already live. Joining...`;
+        statusText.innerText = `Mission ${missionConfig.name} is already live. Joining...`;
       }
-      joinSector(targetPeerId, sector);
+      joinSector(targetPeerId, missionId);
       return;
     }
 
     if (statusText) {
       statusText.innerText = `Peer error: ${message || 'Unknown error'}`;
     }
-    sectorButtons.forEach((button: HTMLButtonElement) => {
+    const missionButtons = Array.from(document.querySelectorAll<HTMLElement>('.mission-btn'));
+    missionButtons.forEach((button: HTMLButtonElement) => {
       button.disabled = false;
     });
   });
 }
 
-function joinSector(targetPeerId: string, sector: string) {
+function joinSector(targetPeerId: string, missionId: string) {
   isHost = false;
   roomCode = targetPeerId;
-  currentSectorId = sector;
+  currentMissionId = missionId;
   clientPeer = new Peer();
 
   clientPeer.on('open', () => {
     if (statusText) {
-      statusText.innerText = `Connecting to sector ${sector}...`;
+      statusText.innerText = `Connecting to mission ${missionId}...`;
     }
     const conn = clientPeer.connect(targetPeerId, { reliable: true });
     hostConnection = conn;
 
     conn.on('open', () => {
       if (statusText) {
-        statusText.innerText = `Connected to sector ${sector}. Starting game...`;
+        statusText.innerText = `Connected to mission ${missionId}. Starting game...`;
       }
       startGameAsClient(conn);
     });
@@ -1739,18 +1731,20 @@ function joinSector(targetPeerId: string, sector: string) {
 
     conn.on('close', () => {
       if (statusText) {
-        statusText.innerText = `Connection to sector ${sector} was lost.`;
+        statusText.innerText = `Connection to mission ${missionId} was lost.`;
       }
-      sectorButtons.forEach((button: HTMLButtonElement) => {
+      const missionButtons = Array.from(document.querySelectorAll<HTMLElement>('.mission-btn'));
+      missionButtons.forEach((button: HTMLButtonElement) => {
         button.disabled = false;
       });
     });
 
     conn.on('error', (err: Error) => {
       if (statusText) {
-        statusText.innerText = `Connection error: ${err.message || 'Unable to join sector'}`;
+        statusText.innerText = `Connection error: ${err.message || 'Unable to join mission'}`;
       }
-      sectorButtons.forEach((button: HTMLButtonElement) => {
+      const missionButtons = Array.from(document.querySelectorAll<HTMLElement>('.mission-btn'));
+      missionButtons.forEach((button: HTMLButtonElement) => {
         button.disabled = false;
       });
     });
@@ -1760,7 +1754,8 @@ function joinSector(targetPeerId: string, sector: string) {
     if (statusText) {
       statusText.innerText = `Peer error: ${err.message || 'Unable to create client peer'}`;
     }
-    sectorButtons.forEach((button: HTMLButtonElement) => {
+    const missionButtons = Array.from(document.querySelectorAll<HTMLElement>('.mission-btn'));
+    missionButtons.forEach((button: HTMLButtonElement) => {
       button.disabled = false;
     });
   });
