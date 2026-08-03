@@ -128,6 +128,9 @@ class MainScene extends Phaser.Scene {
   private lastFired = 0;
   private fireRate = 120;
   private gameStarted = true;
+  private enemySpeed = 150;
+  private broadcastTimer?: Phaser.Time.TimerEvent;
+  private inputTimer?: Phaser.Time.TimerEvent;
 
   private player: Phaser.Physics.Arcade.Sprite | null = null;
   private remotePlayers: Record<string, Phaser.Physics.Arcade.Sprite> = {};
