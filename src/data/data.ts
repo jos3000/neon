@@ -3,12 +3,14 @@ import type { Map as GameMap } from '../types/Map';
 import type { Mission as GameMission } from '../types/Mission';
 import { relayRush } from './missions/relay-rush';
 import { phaseShift } from './missions/phase-shift';
+import { enemyShowcaseMission } from './missions/enemy-showcase';
 import { echoGrid } from './maps/echo-grid';
 import { emberCorridor } from './maps/ember-corridor';
 import { harborOfStatic } from './maps/harbor-of-static';
 import { solarRuins } from './maps/solar-ruins';
 import { blackoutAbyss } from './maps/blackout-abyss';
 import { quantumEcho } from './maps/quantum-echo';
+import { enemyShowcase } from './maps/enemy-showcase';
 import { arcViper } from './enemies/arc-viper';
 import { eclipseGuardian } from './enemies/eclipse-guardian';
 import { glitchScout } from './enemies/glitch-scout';
@@ -34,6 +36,7 @@ export const mapLookup: Record<string, GameMap> = {
   'solar-ruins': solarRuins,
   'blackout-abyss': blackoutAbyss,
   'quantum-echo': quantumEcho,
+  'enemy-showcase': enemyShowcase,
 };
 
 export const enemyDefinitionLookup: Record<string, EnemyConfig> = {
@@ -68,4 +71,5 @@ export function buildMissionConfig(mission: GameMission): MissionConfig {
 export const MISSION_CONFIGS: Record<string, MissionConfig> = {
   [relayRush.id]: buildMissionConfig(relayRush),
   [phaseShift.id]: buildMissionConfig(phaseShift),
+  [enemyShowcaseMission.id]: buildMissionConfig(enemyShowcaseMission),
 };

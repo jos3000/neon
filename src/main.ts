@@ -234,44 +234,6 @@ class MainScene extends Phaser.Scene {
     guestGraphics.fillTriangle(30, 15, 0, 30, 0, 0);
     guestGraphics.generateTexture('guest', 30, 30);
 
-    const enemyGraphics = this.make.graphics({});
-    enemyGraphics.lineStyle(3, 0xff00ff);
-    enemyGraphics.strokeRect(2, 2, 26, 26);
-    enemyGraphics.fillStyle(0x330033, 1);
-    enemyGraphics.fillRect(2, 2, 26, 26);
-    enemyGraphics.generateTexture('enemy', 30, 30);
-
-    const bigEnemyGraphics = this.make.graphics({});
-    bigEnemyGraphics.lineStyle(4, 0xff8800);
-    bigEnemyGraphics.strokeCircle(25, 25, 23);
-    bigEnemyGraphics.fillStyle(0x442200, 1);
-    bigEnemyGraphics.fillCircle(25, 25, 23);
-    bigEnemyGraphics.generateTexture('bigenemy', 50, 50);
-
-    const spawnerGraphics = this.make.graphics({});
-    spawnerGraphics.lineStyle(5, 0xff0055);
-    spawnerGraphics.strokeRect(3, 3, 54, 54);
-    spawnerGraphics.fillStyle(0x440022, 1);
-    spawnerGraphics.fillRect(3, 3, 54, 54);
-    spawnerGraphics.fillStyle(0xff0055, 1);
-    spawnerGraphics.fillRect(20, 20, 20, 20);
-    spawnerGraphics.generateTexture('spawner', 60, 60);
-
-    const laserEnemyGraphics = this.make.graphics({});
-    laserEnemyGraphics.lineStyle(3, 0xff0044);
-    laserEnemyGraphics.fillStyle(0x440011, 1);
-    laserEnemyGraphics.beginPath();
-    laserEnemyGraphics.moveTo(20, 2);
-    laserEnemyGraphics.lineTo(38, 20);
-    laserEnemyGraphics.lineTo(20, 38);
-    laserEnemyGraphics.lineTo(2, 20);
-    laserEnemyGraphics.closePath();
-    laserEnemyGraphics.fillPath();
-    laserEnemyGraphics.strokePath();
-    laserEnemyGraphics.fillStyle(0xff0044, 1);
-    laserEnemyGraphics.fillCircle(20, 20, 7);
-    laserEnemyGraphics.generateTexture('laserenemy', 40, 40);
-
     const bulletGraphics = this.make.graphics({});
     bulletGraphics.fillStyle(0xffff00, 1);
     bulletGraphics.fillCircle(8, 8, 8);
