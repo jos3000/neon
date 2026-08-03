@@ -3,16 +3,14 @@
 import Phaser from 'phaser';
 import Peer, { DataConnection, PeerError } from 'peerjs';
 import { Synth } from './Synth';
-import type { Map as GameMap } from './types/Map';
-import type { Mission as GameMission } from './types/Mission';
+import type { EnemyConfig } from './types/Enemy';
+import {
+  enemyDefinitionLookup,
+  enemyDefinitions,
+  MISSION_CONFIGS,
+  type MissionConfig,
+} from './data/data';
 import { relayRush } from './data/missions/relay-rush';
-import { phaseShift } from './data/missions/phase-shift';
-import { echoGrid } from './data/maps/echo-grid';
-import { emberCorridor } from './data/maps/ember-corridor';
-import { harborOfStatic } from './data/maps/harbor-of-static';
-import { solarRuins } from './data/maps/solar-ruins';
-import { blackoutAbyss } from './data/maps/blackout-abyss';
-import { quantumEcho } from './data/maps/quantum-echo';
 
 type PlayerSnapshot = {
   x: number;
@@ -62,45 +60,6 @@ type PeerEffectMessage = {
 
 type PeerMessage = PeerSnapshotMessage | PeerInputMessage | PeerEffectMessage;
 
-type WallConfig = { x: number; y: number; w: number; h: number };
-
-type MissionConfig = {
-  id: string;
-  name: string;
-  baseCenter: { x: number; y: number };
-  baseRadius: number;
-  spawners: { x: number; y: number }[];
-  walls: WallConfig[];
-  mapIds: string[];
-};
-
-const mapLookup: Record<string, GameMap> = {
-  'echo-grid': echoGrid,
-  'ember-corridor': emberCorridor,
-  'harbor-of-static': harborOfStatic,
-  'solar-ruins': solarRuins,
-  'blackout-abyss': blackoutAbyss,
-  'quantum-echo': quantumEcho,
-};
-
-function buildMissionConfig(mission: GameMission): MissionConfig {
-  const primaryMap = mapLookup[mission.maps[0]] ?? echoGrid;
-  return {
-    id: mission.id,
-    name: mission.name,
-    baseCenter: primaryMap.base ?? { x: primaryMap.width / 2, y: primaryMap.height / 2 },
-    baseRadius: Math.max(120, Math.min(primaryMap.width, primaryMap.height) * 0.2),
-    spawners: primaryMap.enemies.map((enemy) => ({ x: enemy.x, y: enemy.y })),
-    walls: primaryMap.walls.map((wall) => ({ ...wall })),
-    mapIds: mission.maps,
-  };
-}
-
-const MISSION_CONFIGS: Record<string, MissionConfig> = {
-  [relayRush.id]: buildMissionConfig(relayRush),
-  [phaseShift.id]: buildMissionConfig(phaseShift),
-};
-
 class MainScene extends Phaser.Scene {
   private score = 0;
   private gameOver = false;
@@ -149,13 +108,119 @@ class MainScene extends Phaser.Scene {
 
   private baseCenter = { x: 1000, y: 1600 };
   private baseRadius = 180;
-  private SPAWNER_CONFIG: { x: number; y: number }[] = [];
+  private ENEMY_SPAWNS: { id: string; x: number; y: number }[] = [];
 
   private baseGraphics!: Phaser.GameObjects.Graphics;
   private laserGraphics!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'MainScene' });
+  }
+
+  private createEnemyTexture(definition: EnemyConfig) {
+    const visuals =
+      definition.type === 'standard' ? definition.visuals : definition.parts[0]?.visuals;
+    if (!visuals) return;
+
+    const size = Math.max(10, visuals.size ?? 16);
+    const graphics = this.make.graphics({});
+    const fillColor = parseInt(visuals.fillColor, 16);
+    const strokeColor = visuals.strokeColor ? parseInt(visuals.strokeColor, 16) : 0xffffff;
+    const strokeWidth = visuals.strokeWidth ?? 2;
+
+    graphics.lineStyle(strokeWidth, strokeColor, 1);
+    graphics.fillStyle(fillColor, 1);
+
+    const center = size + 2;
+    const radius = size;
+
+    switch (visuals.shape) {
+      case 'circle':
+        graphics.fillCircle(center, center, radius);
+        graphics.strokeCircle(center, center, radius);
+        break;
+      case 'square':
+        graphics.fillRect(center - radius, center - radius, radius * 2, radius * 2);
+        graphics.strokeRect(center - radius, center - radius, radius * 2, radius * 2);
+        break;
+      case 'triangle':
+        graphics.beginPath();
+        graphics.moveTo(center, center - radius);
+        graphics.lineTo(center + radius, center + radius);
+        graphics.lineTo(center - radius, center + radius);
+        graphics.closePath();
+        graphics.fillPath();
+        graphics.strokePath();
+        break;
+      case 'diamond':
+        graphics.beginPath();
+        graphics.moveTo(center, center - radius);
+        graphics.lineTo(center + radius, center);
+        graphics.lineTo(center, center + radius);
+        graphics.lineTo(center - radius, center);
+        graphics.closePath();
+        graphics.fillPath();
+        graphics.strokePath();
+        break;
+      case 'hexagon':
+        for (let i = 0; i < 6; i += 1) {
+          const angle = (Math.PI / 3) * i - Math.PI / 6;
+          const x = center + Math.cos(angle) * radius;
+          const y = center + Math.sin(angle) * radius;
+          if (i === 0) graphics.moveTo(x, y);
+          else graphics.lineTo(x, y);
+        }
+        graphics.closePath();
+        graphics.fillPath();
+        graphics.strokePath();
+        break;
+      case 'octagon':
+        for (let i = 0; i < 8; i += 1) {
+          const angle = (Math.PI / 4) * i - Math.PI / 8;
+          const x = center + Math.cos(angle) * radius;
+          const y = center + Math.sin(angle) * radius;
+          if (i === 0) graphics.moveTo(x, y);
+          else graphics.lineTo(x, y);
+        }
+        graphics.closePath();
+        graphics.fillPath();
+        graphics.strokePath();
+        break;
+      case 'star':
+        graphics.beginPath();
+        for (let i = 0; i < 10; i += 1) {
+          const outerRadius = radius;
+          const innerRadius = radius * 0.4;
+          const angle = (Math.PI / 5) * i - Math.PI / 2;
+          const r = i % 2 === 0 ? outerRadius : innerRadius;
+          const x = center + Math.cos(angle) * r;
+          const y = center + Math.sin(angle) * r;
+          if (i === 0) graphics.moveTo(x, y);
+          else graphics.lineTo(x, y);
+        }
+        graphics.closePath();
+        graphics.fillPath();
+        graphics.strokePath();
+        break;
+      case 'pentagon':
+        for (let i = 0; i < 5; i += 1) {
+          const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+          const x = center + Math.cos(angle) * radius;
+          const y = center + Math.sin(angle) * radius;
+          if (i === 0) graphics.moveTo(x, y);
+          else graphics.lineTo(x, y);
+        }
+        graphics.closePath();
+        graphics.fillPath();
+        graphics.strokePath();
+        break;
+      default:
+        graphics.fillCircle(center, center, radius);
+        graphics.strokeCircle(center, center, radius);
+    }
+
+    graphics.generateTexture(definition.id, size * 2 + 4, size * 2 + 4);
+    graphics.destroy();
   }
 
   preload() {
@@ -233,6 +298,10 @@ class MainScene extends Phaser.Scene {
     wallGraphics.moveTo(64, 0);
     wallGraphics.lineTo(0, 64);
     wallGraphics.generateTexture('wall', 64, 64);
+
+    enemyDefinitions.forEach((definition) => {
+      this.createEnemyTexture(definition);
+    });
   }
 
   create() {
@@ -241,7 +310,7 @@ class MainScene extends Phaser.Scene {
 
     this.baseCenter = missionConf.baseCenter;
     this.baseRadius = missionConf.baseRadius;
-    this.SPAWNER_CONFIG = missionConf.spawners;
+    this.ENEMY_SPAWNS = missionConf.enemySpawns;
 
     this.physics.world.setBounds(0, 0, 2000, 2000);
     this.cameras.main.setBounds(0, 0, 2000, 2000);
@@ -374,7 +443,7 @@ class MainScene extends Phaser.Scene {
 
     if (isHost) {
       this.enemySpeed = 150;
-      this.initSpawners();
+      this.initMapEnemies();
 
       this.physics.add.collider(this.bullets, this.enemies, this.hitEnemy, undefined, this);
       this.physics.add.collider(this.player, this.enemies, this.hitPlayer, undefined, this);
@@ -698,141 +767,136 @@ class MainScene extends Phaser.Scene {
     };
   }
 
-  initSpawners() {
-    this.SPAWNER_CONFIG.forEach((pos) => {
-      const enemyId = `enemy-${++this.nextEnemyId}`;
-      const spawner = this.enemies.create(pos.x, pos.y, 'spawner');
-      if (spawner) {
-        spawner.setData('syncId', enemyId);
-        spawner.setData('type', 'spawner');
-        spawner.setData('hp', 100);
-        // Stagger initial spawn times
-        spawner.setData('nextSpawnTime', this.time.now + Phaser.Math.Between(500, 2500));
-        spawner.setImmovable(true);
-        spawner.setCollideWorldBounds(true);
-      }
-    });
-  }
-
-  updateSpawners(time: number) {
-    if (!this.gameStarted || this.gameOver || this.isPaused) return;
-
-    const spawners: Phaser.GameObjects.Sprite[] = [];
-    const enemyCounts: Record<string, number> = {};
-
-    // Map active spawners and count how many enemies belong to each
-    this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
-      if (!e.active) return;
-      const type = e.getData('type');
-      if (type === 'spawner') {
-        spawners.push(e);
-        if (enemyCounts[e.getData('syncId')] === undefined) {
-          enemyCounts[e.getData('syncId')] = 0;
-        }
-      } else {
-        const spawnerId = e.getData('spawnerId');
-        if (spawnerId) {
-          enemyCounts[spawnerId] = (enemyCounts[spawnerId] || 0) + 1;
-        }
-      }
-    });
-
-    spawners.forEach((spawner) => {
-      const nextSpawnTime = spawner.getData('nextSpawnTime') || 0;
-
-      if (time > nextSpawnTime) {
-        const spawnerId = spawner.getData('syncId');
-        const currentSpawns = enemyCounts[spawnerId] || 0;
-
-        const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
-        const spawnX = Phaser.Math.Clamp(spawner.x + Math.cos(angle) * 45, 40, 1960);
-        const spawnY = Phaser.Math.Clamp(spawner.y + Math.sin(angle) * 45, 40, 1960);
-
-        // Ensure enemies don't spawn inside the safe base
-        if (this.isInBaseArea(spawnX, spawnY)) {
-          spawner.setData('nextSpawnTime', time + 500);
-          return;
-        }
-
-        const rand = Math.random();
-        let enemyType = 'normal';
-        let texture = 'enemy';
-        let hp = 1;
-        if (rand < 0.25) {
-          enemyType = 'big';
-          texture = 'bigenemy';
-          hp = 5;
-        } else if (rand < 0.5) {
-          enemyType = 'laser';
-          texture = 'laserenemy';
-          hp = 3;
-        }
-
-        const enemyId = `enemy-${++this.nextEnemyId}`;
-        const enemy = this.enemies.create(spawnX, spawnY, texture);
-        if (enemy) {
-          enemy.setData('syncId', enemyId);
-          enemy.setData('spawnerId', spawnerId); // Track which spawner made this
-          enemy.setData('type', enemyType);
-          enemy.setData('hp', hp);
-          enemy.setData('spawnTime', this.time.now - Phaser.Math.Between(0, 10000));
-          enemy.setBounce(1);
-          enemy.setCollideWorldBounds(true);
-          if (isHost) this.broadcastEffect(enemyType === 'big' ? 'big-spawn' : 'spawn');
-        }
-
-        // Calculate dynamic delay: faster when fewer, slower when many
-        // E.g., Base: 800ms + 1200ms per existing spawn
-        // 0 spawns = 800ms, 2 spawns = 3.2s, 5 spawns = 6.8s
-        const nextDelay = 800 + currentSpawns * 1200;
-        spawner.setData('nextSpawnTime', time + nextDelay);
-      }
-    });
-  }
-
-  spawnEnemy() {
-    if (!this.gameStarted || this.gameOver || this.isPaused) return;
-    const spawn = this.getSpawnPointOutsideBase();
+  private createEnemySprite(definition: EnemyConfig, x: number, y: number) {
     const enemyId = `enemy-${++this.nextEnemyId}`;
-    const enemy = this.enemies.create(spawn.x, spawn.y, 'enemy');
-    if (enemy) {
-      enemy.setData('syncId', enemyId);
-      enemy.setData('type', 'normal');
-      enemy.setData('hp', 1);
-      enemy.setBounce(1);
-      enemy.setCollideWorldBounds(true);
-      if (isHost) this.broadcastEffect('spawn');
+    const textureKey = this.textures.exists(definition.id) ? definition.id : 'enemy';
+    const sprite = this.enemies.create(x, y, textureKey);
+    if (!sprite) return null;
+
+    sprite.setData('syncId', enemyId);
+    sprite.setData('enemyId', definition.id);
+    sprite.setData('type', definition.id);
+    sprite.setData('hp', definition.type === 'boss' ? 1 : definition.maxHp);
+    sprite.setData('definition', definition);
+    sprite.setData('scoreValue', definition.type === 'standard' ? definition.scoreValue : 1000);
+    sprite.setData('spawnTime', this.time.now);
+    sprite.setBounce(1);
+    sprite.setCollideWorldBounds(true);
+    sprite.setDepth(2);
+
+    if (definition.type === 'standard') {
+      sprite.setData('behavior', definition);
+      sprite.setData('movementStyle', definition.movement.style);
+      sprite.setData('movementSpeed', definition.movement.speed);
+      sprite.setData('attackPattern', definition.attack.pattern);
+      sprite.setData('attackDamage', definition.attack.damage);
+      sprite.setData('attackCooldown', definition.attack.fireRateMs);
+      sprite.setData('attackProjectileCount', definition.attack.projectileCount ?? 1);
+      sprite.setData('attackProjectileSpeed', definition.attack.projectileSpeed ?? 220);
+      sprite.setData('orbitRadius', definition.movement.orbitRadius ?? 0);
+    } else {
+      sprite.setData('behavior', definition);
+      sprite.setData('bossParts', definition.parts);
+      sprite.setData('bossPhases', definition.phases);
+      sprite.setData('bossPhaseIndex', 0);
     }
+
+    return sprite;
   }
 
-  spawnBigEnemy() {
-    if (!this.gameStarted || this.gameOver || this.isPaused) return;
-    const spawn = this.getSpawnPointOutsideBase();
-    const enemyId = `enemy-${++this.nextEnemyId}`;
-    const enemy = this.enemies.create(spawn.x, spawn.y, 'bigenemy');
-    if (enemy) {
-      enemy.setData('syncId', enemyId);
-      enemy.setData('type', 'big');
-      enemy.setData('hp', 5);
-      enemy.setBounce(1);
-      enemy.setCollideWorldBounds(true);
-      if (isHost) this.broadcastEffect('big-spawn');
-    }
+  initMapEnemies() {
+    this.ENEMY_SPAWNS.forEach((spawn) => {
+      const definition = enemyDefinitionLookup[spawn.id];
+      if (!definition) return;
+
+      const sprite = this.createEnemySprite(definition, spawn.x, spawn.y);
+      if (!sprite) return;
+
+      if (isHost) {
+        this.broadcastEffect(definition.type === 'boss' ? 'big-spawn' : 'spawn');
+      }
+    });
   }
 
-  spawnLaserEnemy() {
-    if (!this.gameStarted || this.gameOver || this.isPaused) return;
-    const spawn = this.getSpawnPointOutsideBase();
-    const enemyId = `enemy-${++this.nextEnemyId}`;
-    const enemy = this.enemies.create(spawn.x, spawn.y, 'laserenemy');
-    if (enemy) {
-      enemy.setData('syncId', enemyId);
-      enemy.setData('type', 'laser');
-      enemy.setData('hp', 3);
-      enemy.setData('spawnTime', this.time.now - Phaser.Math.Between(0, 10000));
-      enemy.setBounce(1);
-      enemy.setCollideWorldBounds(true);
-      if (isHost) this.broadcastEffect('spawn');
+  private updateEnemyBehavior(
+    enemy: Phaser.GameObjects.Sprite,
+    time: number,
+    target: Phaser.Physics.Arcade.Sprite | null,
+    minDist: number
+  ) {
+    const definition = enemy.getData('definition') as EnemyConfig | undefined;
+    if (!definition) return;
+
+    if (definition.type === 'standard') {
+      const movement = definition.movement;
+      const enemyType = definition.id;
+
+      if (this.isInBaseArea(enemy.x, enemy.y)) {
+        const angle = Phaser.Math.Angle.Between(
+          this.baseCenter.x,
+          this.baseCenter.y,
+          enemy.x,
+          enemy.y
+        );
+        const safeX = this.baseCenter.x + Math.cos(angle) * (this.baseRadius + 25);
+        const safeY = this.baseCenter.y + Math.sin(angle) * (this.baseRadius + 25);
+        enemy.setPosition(safeX, safeY);
+        this.physics.velocityFromRotation(
+          angle + Math.PI,
+          180,
+          enemy.body.velocity as Phaser.Math.Vector2
+        );
+        enemy.rotation = angle + Math.PI;
+        return;
+      }
+
+      if (movement.style === 'wander' || !target || minDist > 600) {
+        let wanderDirection = enemy.getData('wanderDirection') || 0;
+        let nextTurnAt = enemy.getData('nextTurnAt') || 0;
+        if (time > nextTurnAt) {
+          wanderDirection = Phaser.Math.FloatBetween(0, Math.PI * 2);
+          enemy.setData('wanderDirection', wanderDirection);
+          enemy.setData('nextTurnAt', time + 800);
+        }
+        this.physics.velocityFromRotation(
+          wanderDirection,
+          movement.speed,
+          enemy.body.velocity as Phaser.Math.Vector2
+        );
+        enemy.rotation = wanderDirection;
+        return;
+      }
+
+      if (movement.style === 'orbit' && target) {
+        const orbitAngle = (time / 1000) * 1.5 + enemy.getData('orbitOffset') || 0;
+        const orbitX = target.x + Math.cos(orbitAngle) * movement.orbitRadius!;
+        const orbitY = target.y + Math.sin(orbitAngle) * movement.orbitRadius!;
+        this.physics.moveTo(enemy, orbitX, orbitY, movement.speed);
+        enemy.rotation = Phaser.Math.Angle.Between(enemy.x, enemy.y, orbitX, orbitY);
+        return;
+      }
+
+      if (movement.style === 'chase' && target) {
+        this.physics.moveToObject(enemy, target, movement.speed);
+        enemy.rotation = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
+        return;
+      }
+
+      if (movement.style === 'flee' && target) {
+        this.physics.moveToObject(enemy, target, -movement.speed);
+        enemy.rotation = Phaser.Math.Angle.Between(target.x, target.y, enemy.x, enemy.y);
+        return;
+      }
+
+      this.physics.velocityFromRotation(
+        enemy.rotation,
+        movement.speed,
+        enemy.body.velocity as Phaser.Math.Vector2
+      );
+
+      if (enemyType === 'arc-viper') {
+        enemy.rotation += 0.03;
+      }
     }
   }
 
@@ -900,8 +964,8 @@ class MainScene extends Phaser.Scene {
     if (hp <= 0) {
       this.broadcastEffect('explosion', enemySprite.x, enemySprite.y);
       enemySprite.destroy();
-      const type = enemySprite.getData('type');
-      this.score += type === 'spawner' ? 500 : type === 'big' ? 50 : type === 'laser' ? 25 : 10;
+      const scoreValue = enemySprite.getData('scoreValue') as number | undefined;
+      this.score += scoreValue ?? 10;
       this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
     } else {
       enemySprite.setTintFill(0xffffff);
@@ -1017,15 +1081,8 @@ class MainScene extends Phaser.Scene {
     enemies.forEach((enemy) => {
       let sprite = this.enemySprites[enemy.id];
       if (!sprite) {
-        const texture =
-          enemy.type === 'spawner'
-            ? 'spawner'
-            : enemy.type === 'big'
-              ? 'bigenemy'
-              : enemy.type === 'laser'
-                ? 'laserenemy'
-                : 'enemy';
-        sprite = this.enemies.create(enemy.x, enemy.y, texture);
+        const textureKey = this.textures.exists(enemy.type) ? enemy.type : 'enemy';
+        sprite = this.enemies.create(enemy.x, enemy.y, textureKey);
         if (!sprite) return;
         sprite.setData('syncId', enemy.id);
       }
@@ -1257,9 +1314,6 @@ class MainScene extends Phaser.Scene {
     }
 
     if (isHost) {
-      // Dynamic Spawner Loop Replaces the fixed timer
-      this.updateSpawners(time);
-
       const speed = 350;
       for (const id in this.remotePlayers) {
         const rp = this.remotePlayers[id];
@@ -1307,6 +1361,9 @@ class MainScene extends Phaser.Scene {
           return;
         }
 
+        const definition = enemy.getData('definition') as EnemyConfig | undefined;
+        if (!definition) return;
+
         let target: Phaser.Physics.Arcade.Sprite | null = null;
         let minDist = Infinity;
         alivePlayers.forEach((player) => {
@@ -1318,138 +1375,60 @@ class MainScene extends Phaser.Scene {
           }
         });
 
-        if (enemy.getData('type') === 'laser') {
-          let spawnTime = enemy.getData('spawnTime') as number;
-          if (!spawnTime) {
-            spawnTime = time - Phaser.Math.Between(0, 10000);
-            enemy.setData('spawnTime', spawnTime);
-          }
-          const cycleTime = (time - spawnTime) % 10000;
+        if (definition.type === 'standard') {
+          this.updateEnemyBehavior(enemy, time, target, minDist);
 
-          if (cycleTime >= 8800 && cycleTime < 9800) {
-            // Charging phase
-            if (enemy.getData('laserState') !== 'charging') {
-              enemy.setData('laserState', 'charging');
-              let angle = enemy.rotation;
-              if (target) {
-                angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
+          if (
+            definition.attack.pattern === 'single_shot' &&
+            target &&
+            time > (enemy.getData('nextShotAt') || 0)
+          ) {
+            const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
+            const bulletId = `bullet-${++this.nextBulletId}`;
+            const bullet = this.createBulletSprite(enemy.x, enemy.y, bulletId);
+            if (bullet) {
+              this.physics.velocityFromRotation(
+                angle,
+                definition.attack.projectileSpeed ?? 220,
+                bullet.body.velocity as Phaser.Math.Vector2
+              );
+              bullet.rotation = angle;
+              enemy.setData('nextShotAt', time + definition.attack.fireRateMs);
+            }
+          }
+
+          if (
+            definition.attack.pattern === 'burst' &&
+            target &&
+            time > (enemy.getData('nextShotAt') || 0)
+          ) {
+            for (let i = 0; i < (definition.attack.projectileCount ?? 3); i += 1) {
+              const spread = (i - ((definition.attack.projectileCount ?? 3) - 1) / 2) * 0.15;
+              const angle =
+                Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y) + spread;
+              const bulletId = `bullet-${++this.nextBulletId}`;
+              const bullet = this.createBulletSprite(enemy.x, enemy.y, bulletId);
+              if (bullet) {
+                this.physics.velocityFromRotation(
+                  angle,
+                  definition.attack.projectileSpeed ?? 180,
+                  bullet.body.velocity as Phaser.Math.Vector2
+                );
+                bullet.rotation = angle;
               }
-              enemy.setData('laserAngle', angle);
             }
-            enemy.setVelocity(0, 0);
-            enemy.rotation = enemy.getData('laserAngle') as number;
-          } else if (cycleTime >= 9800) {
-            // Firing phase
-            if (enemy.getData('laserState') !== 'firing') {
-              enemy.setData('laserState', 'firing');
-              this.broadcastEffect('laser', enemy.x, enemy.y);
-              this.cameras.main.shake(100, 0.005);
-            }
-            enemy.setVelocity(0, 0);
-            const angle = (enemy.getData('laserAngle') as number) ?? enemy.rotation;
+            enemy.setData('nextShotAt', time + definition.attack.fireRateMs);
+          }
+
+          return;
+        }
+
+        if (definition.type === 'boss') {
+          const corePart = definition.parts.find((part) => part.isCore);
+          if (corePart && target) {
+            const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
             enemy.rotation = angle;
-
-            const endPos = this.getLaserEndPoint(enemy.x, enemy.y, angle);
-            const beamWidth = 16;
-            const playerHitRadius = 15;
-
-            alivePlayers.forEach((player) => {
-              if (!player || !player.active || player.getData('isDead')) return;
-              const dist = this.pointToSegmentDistance(
-                player.x,
-                player.y,
-                enemy.x,
-                enemy.y,
-                endPos.x,
-                endPos.y
-              );
-              if (dist <= beamWidth / 2 + playerHitRadius) {
-                this.handlePlayerDeath(player);
-              }
-            });
-          } else {
-            // Normal moving phase
-            if (enemy.getData('laserState') !== 'idle') {
-              enemy.setData('laserState', 'idle');
-            }
-            if (this.isInBaseArea(enemy.x, enemy.y)) {
-              const angle = Phaser.Math.Angle.Between(
-                this.baseCenter.x,
-                this.baseCenter.y,
-                enemy.x,
-                enemy.y
-              );
-              const safeX = this.baseCenter.x + Math.cos(angle) * (this.baseRadius + 25);
-              const safeY = this.baseCenter.y + Math.sin(angle) * (this.baseRadius + 25);
-              enemy.setPosition(safeX, safeY);
-              this.physics.velocityFromRotation(
-                angle + Math.PI,
-                180,
-                enemy.body.velocity as Phaser.Math.Vector2
-              );
-              enemy.rotation = angle + Math.PI;
-              return;
-            }
-
-            if (!target || minDist > 600) {
-              let wanderDirection = enemy.getData('wanderDirection') || 0;
-              let nextTurnAt = enemy.getData('nextTurnAt') || 0;
-              if (time > nextTurnAt) {
-                wanderDirection = Phaser.Math.FloatBetween(0, Math.PI * 2);
-                enemy.setData('wanderDirection', wanderDirection);
-                enemy.setData('nextTurnAt', time + 800);
-              }
-              this.physics.velocityFromRotation(
-                wanderDirection,
-                80,
-                enemy.body.velocity as Phaser.Math.Vector2
-              );
-              enemy.rotation = wanderDirection;
-            } else {
-              this.physics.moveToObject(enemy, target, 120);
-              enemy.rotation = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
-            }
           }
-          return;
-        }
-
-        // Standard Enemy Handling
-        if (this.isInBaseArea(enemy.x, enemy.y)) {
-          const angle = Phaser.Math.Angle.Between(
-            this.baseCenter.x,
-            this.baseCenter.y,
-            enemy.x,
-            enemy.y
-          );
-          const safeX = this.baseCenter.x + Math.cos(angle) * (this.baseRadius + 25);
-          const safeY = this.baseCenter.y + Math.sin(angle) * (this.baseRadius + 25);
-          enemy.setPosition(safeX, safeY);
-          this.physics.velocityFromRotation(
-            angle + Math.PI,
-            180,
-            enemy.body.velocity as Phaser.Math.Vector2
-          );
-          enemy.rotation = angle + Math.PI;
-          return;
-        }
-
-        if (!target || minDist > 600) {
-          let wanderDirection = enemy.getData('wanderDirection') || 0;
-          let nextTurnAt = enemy.getData('nextTurnAt') || 0;
-          if (time > nextTurnAt) {
-            wanderDirection = Phaser.Math.FloatBetween(0, Math.PI * 2);
-            enemy.setData('wanderDirection', wanderDirection);
-            enemy.setData('nextTurnAt', time + 800);
-          }
-          this.physics.velocityFromRotation(
-            wanderDirection,
-            80,
-            enemy.body.velocity as Phaser.Math.Vector2
-          );
-          enemy.rotation = wanderDirection;
-        } else {
-          this.physics.moveToObject(enemy, target, 150);
-          enemy.rotation += 0.05;
         }
       });
     }
