@@ -5,6 +5,7 @@ export const harborOfStatic: Map = {
   name: 'Harbor of Static',
   width: 1500,
   height: 900,
+  base: { x: 1240, y: 700 },
   walls: [
     { x: 220, y: 160, w: 240, h: 24 },
     { x: 780, y: 220, w: 220, h: 24 },

@@ -5,6 +5,7 @@ export const blackoutAbyss: Map = {
   name: 'Blackout Abyss',
   width: 1600,
   height: 1000,
+  base: { x: 1300, y: 760 },
   walls: [
     { x: 220, y: 200, w: 320, h: 24 },
     { x: 760, y: 260, w: 260, h: 24 },

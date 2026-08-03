@@ -5,6 +5,7 @@ export interface Map {
   name: string;
   width: number;
   height: number;
+  base: { x: number; y: number };
   walls: Wall[];
   enemies: {
     id: string;

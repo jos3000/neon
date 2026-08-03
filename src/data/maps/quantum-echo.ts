@@ -5,6 +5,7 @@ export const quantumEcho: Map = {
   name: 'Quantum Echo',
   width: 1700,
   height: 1000,
+  base: { x: 1420, y: 760 },
   walls: [
     { x: 200, y: 220, w: 260, h: 24 },
     { x: 760, y: 160, w: 180, h: 24 },

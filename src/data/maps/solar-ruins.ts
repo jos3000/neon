@@ -5,6 +5,7 @@ export const solarRuins: Map = {
   name: 'Solar Ruins',
   width: 1450,
   height: 950,
+  base: { x: 1180, y: 760 },
   walls: [
     { x: 160, y: 180, w: 340, h: 24 },
     { x: 760, y: 240, w: 200, h: 24 },

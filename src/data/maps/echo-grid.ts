@@ -5,6 +5,7 @@ export const echoGrid: Map = {
   name: 'Echo Grid',
   width: 1200,
   height: 800,
+  base: { x: 1000, y: 660 },
   walls: [
     { x: 140, y: 120, w: 180, h: 24 },
     { x: 500, y: 180, w: 160, h: 24 },

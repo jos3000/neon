@@ -5,6 +5,7 @@ export const emberCorridor: Map = {
   name: 'Ember Corridor',
   width: 1400,
   height: 900,
+  base: { x: 1180, y: 720 },
   walls: [
     { x: 180, y: 220, w: 250, h: 24 },
     { x: 620, y: 280, w: 180, h: 24 },

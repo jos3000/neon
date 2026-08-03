@@ -88,7 +88,7 @@ function buildMissionConfig(mission: GameMission): MissionConfig {
   return {
     id: mission.id,
     name: mission.name,
-    baseCenter: { x: primaryMap.width / 2, y: primaryMap.height / 2 },
+    baseCenter: primaryMap.base ?? { x: primaryMap.width / 2, y: primaryMap.height / 2 },
     baseRadius: Math.max(120, Math.min(primaryMap.width, primaryMap.height) * 0.2),
     spawners: primaryMap.enemies.map((enemy) => ({ x: enemy.x, y: enemy.y })),
     walls: primaryMap.walls.map((wall) => ({ ...wall })),
