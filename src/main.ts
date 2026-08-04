@@ -857,6 +857,16 @@ class MainScene extends Phaser.Scene {
     };
   }
 
+  private configureHeavyBossSprite(sprite: Phaser.GameObjects.Sprite) {
+    const body = sprite.body as Phaser.Physics.Arcade.Body;
+    if (!body) return;
+
+    body.setBounce(0);
+    body.setImmovable(true);
+    body.setDrag(1000, 1000);
+    body.setVelocity(0, 0);
+  }
+
   private createEnemySprite(definition: EnemyConfig, x: number, y: number) {
     const enemyId = `enemy-${++this.nextEnemyId}`;
     if (definition.type === 'standard') {
@@ -913,6 +923,7 @@ class MainScene extends Phaser.Scene {
     coreSprite.setBounce(1);
     coreSprite.setCollideWorldBounds(true);
     coreSprite.setDepth(2);
+    this.configureHeavyBossSprite(coreSprite);
 
     // Store boss-level metadata on the core.
     coreSprite.setData('bossParts', bossDef.parts);
@@ -942,6 +953,7 @@ class MainScene extends Phaser.Scene {
       partSprite.setBounce(1);
       partSprite.setCollideWorldBounds(true);
       partSprite.setDepth(2);
+      this.configureHeavyBossSprite(partSprite);
     });
 
     return coreSprite;
