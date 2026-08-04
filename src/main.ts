@@ -112,14 +112,141 @@ class MainScene extends Phaser.Scene {
 
   private baseGraphics!: Phaser.GameObjects.Graphics;
   private laserGraphics!: Phaser.GameObjects.Graphics;
+  private connectionGraphics!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'MainScene' });
   }
 
   private createEnemyTexture(definition: EnemyConfig) {
-    const visuals =
-      definition.type === 'standard' ? definition.visuals : definition.parts[0]?.visuals;
+    if (definition.type === 'boss') {
+      // Generate a texture for each part using a namespaced key: "id::partId"
+      definition.parts.forEach((part) => {
+        const visuals = part.visuals;
+        if (!visuals) return;
+        const size = Math.max(10, visuals.size ?? 16);
+        const graphics = this.make.graphics({});
+        const fillColor = parseInt(visuals.fillColor, 16);
+        const strokeColor = visuals.strokeColor ? parseInt(visuals.strokeColor, 16) : 0xffffff;
+        const strokeWidth = visuals.strokeWidth ?? 2;
+
+        graphics.lineStyle(strokeWidth, strokeColor, 1);
+        graphics.fillStyle(fillColor, 1);
+
+        const center = size + 2;
+        const radius = size;
+
+        switch (visuals.shape) {
+          case 'circle':
+            graphics.fillCircle(center, center, radius);
+            graphics.strokeCircle(center, center, radius);
+            break;
+          case 'square':
+            graphics.fillRect(center - radius, center - radius, radius * 2, radius * 2);
+            graphics.strokeRect(center - radius, center - radius, radius * 2, radius * 2);
+            break;
+          case 'triangle':
+            graphics.beginPath();
+            graphics.moveTo(center, center - radius);
+            graphics.lineTo(center + radius, center + radius);
+            graphics.lineTo(center - radius, center + radius);
+            graphics.closePath();
+            graphics.fillPath();
+            graphics.strokePath();
+            break;
+          case 'diamond':
+            graphics.beginPath();
+            graphics.moveTo(center, center - radius);
+            graphics.lineTo(center + radius, center);
+            graphics.lineTo(center, center + radius);
+            graphics.lineTo(center - radius, center);
+            graphics.closePath();
+            graphics.fillPath();
+            graphics.strokePath();
+            break;
+          case 'hexagon':
+            for (let i = 0; i < 6; i += 1) {
+              const angle = (Math.PI / 3) * i - Math.PI / 6;
+              const x = center + Math.cos(angle) * radius;
+              const y = center + Math.sin(angle) * radius;
+              if (i === 0) graphics.moveTo(x, y);
+              else graphics.lineTo(x, y);
+            }
+            graphics.closePath();
+            graphics.fillPath();
+            graphics.strokePath();
+            break;
+          case 'octagon':
+            for (let i = 0; i < 8; i += 1) {
+              const angle = (Math.PI / 4) * i - Math.PI / 8;
+              const x = center + Math.cos(angle) * radius;
+              const y = center + Math.sin(angle) * radius;
+              if (i === 0) graphics.moveTo(x, y);
+              else graphics.lineTo(x, y);
+            }
+            graphics.closePath();
+            graphics.fillPath();
+            graphics.strokePath();
+            break;
+          case 'star':
+            graphics.beginPath();
+            for (let i = 0; i < 10; i += 1) {
+              const outerRadius = radius;
+              const innerRadius = radius * 0.4;
+              const angle = (Math.PI / 5) * i - Math.PI / 2;
+              const r = i % 2 === 0 ? outerRadius : innerRadius;
+              const x = center + Math.cos(angle) * r;
+              const y = center + Math.sin(angle) * r;
+              if (i === 0) graphics.moveTo(x, y);
+              else graphics.lineTo(x, y);
+            }
+            graphics.closePath();
+            graphics.fillPath();
+            graphics.strokePath();
+            break;
+          case 'pentagon':
+            for (let i = 0; i < 5; i += 1) {
+              const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+              const x = center + Math.cos(angle) * radius;
+              const y = center + Math.sin(angle) * radius;
+              if (i === 0) graphics.moveTo(x, y);
+              else graphics.lineTo(x, y);
+            }
+            graphics.closePath();
+            graphics.fillPath();
+            graphics.strokePath();
+            break;
+          default:
+            graphics.fillCircle(center, center, radius);
+            graphics.strokeCircle(center, center, radius);
+        }
+
+        graphics.generateTexture(`${definition.id}::${part.partId}`, size * 2 + 4, size * 2 + 4);
+        graphics.destroy();
+      });
+
+      // Also generate a fallback texture for the boss id using the core visuals
+      const coreVisuals = definition.parts[0]?.visuals;
+      if (coreVisuals) {
+        const size = Math.max(10, coreVisuals.size ?? 16);
+        const graphics = this.make.graphics({});
+        graphics.lineStyle(
+          coreVisuals.strokeWidth ?? 2,
+          coreVisuals.strokeColor ? parseInt(coreVisuals.strokeColor, 16) : 0xffffff,
+          1
+        );
+        graphics.fillStyle(parseInt(coreVisuals.fillColor, 16), 1);
+        const center = size + 2;
+        const radius = size;
+        graphics.fillCircle(center, center, radius);
+        graphics.strokeCircle(center, center, radius);
+        graphics.generateTexture(definition.id, size * 2 + 4, size * 2 + 4);
+        graphics.destroy();
+      }
+      return;
+    }
+
+    const visuals = definition.visuals;
     if (!visuals) return;
 
     const size = Math.max(10, visuals.size ?? 16);
@@ -294,6 +421,7 @@ class MainScene extends Phaser.Scene {
     this.baseGraphics.setDepth(40);
 
     this.laserGraphics = this.add.graphics().setDepth(5);
+    this.connectionGraphics = this.add.graphics().setDepth(1);
 
     this.gameOver = false;
     this.isPaused = false;
@@ -731,22 +859,22 @@ class MainScene extends Phaser.Scene {
 
   private createEnemySprite(definition: EnemyConfig, x: number, y: number) {
     const enemyId = `enemy-${++this.nextEnemyId}`;
-    const textureKey = this.textures.exists(definition.id) ? definition.id : 'enemy';
-    const sprite = this.enemies.create(x, y, textureKey);
-    if (!sprite) return null;
-
-    sprite.setData('syncId', enemyId);
-    sprite.setData('enemyId', definition.id);
-    sprite.setData('type', definition.id);
-    sprite.setData('hp', definition.type === 'boss' ? 1 : definition.maxHp);
-    sprite.setData('definition', definition);
-    sprite.setData('scoreValue', definition.type === 'standard' ? definition.scoreValue : 1000);
-    sprite.setData('spawnTime', this.time.now);
-    sprite.setBounce(1);
-    sprite.setCollideWorldBounds(true);
-    sprite.setDepth(2);
-
     if (definition.type === 'standard') {
+      const textureKey = this.textures.exists(definition.id) ? definition.id : 'enemy';
+      const sprite = this.enemies.create(x, y, textureKey);
+      if (!sprite) return null;
+
+      sprite.setData('syncId', enemyId);
+      sprite.setData('enemyId', definition.id);
+      sprite.setData('type', definition.id);
+      sprite.setData('hp', definition.maxHp);
+      sprite.setData('definition', definition);
+      sprite.setData('scoreValue', definition.scoreValue);
+      sprite.setData('spawnTime', this.time.now);
+      sprite.setBounce(1);
+      sprite.setCollideWorldBounds(true);
+      sprite.setDepth(2);
+
       sprite.setData('behavior', definition);
       sprite.setData('movementStyle', definition.movement.style);
       sprite.setData('movementSpeed', definition.movement.speed);
@@ -756,14 +884,67 @@ class MainScene extends Phaser.Scene {
       sprite.setData('attackProjectileCount', definition.attack.projectileCount ?? 1);
       sprite.setData('attackProjectileSpeed', definition.attack.projectileSpeed ?? 220);
       sprite.setData('orbitRadius', definition.movement.orbitRadius ?? 0);
-    } else {
-      sprite.setData('behavior', definition);
-      sprite.setData('bossParts', definition.parts);
-      sprite.setData('bossPhases', definition.phases);
-      sprite.setData('bossPhaseIndex', 0);
+
+      return sprite;
     }
 
-    return sprite;
+    // Boss: create a core sprite (root) and individual part sprites for each part
+    const bossDef = definition;
+    const corePart = bossDef.parts.find((p) => p.isCore) || bossDef.parts[0];
+    const coreKey = this.textures.exists(`${bossDef.id}::${corePart.partId}`)
+      ? `${bossDef.id}::${corePart.partId}`
+      : bossDef.id;
+
+    const coreSprite = this.enemies.create(x, y, coreKey);
+    if (!coreSprite) return null;
+
+    coreSprite.setData('syncId', enemyId);
+    coreSprite.setData('enemyId', bossDef.id);
+    coreSprite.setData('type', bossDef.id);
+    coreSprite.setData('definition', bossDef);
+    coreSprite.setData('isPart', true);
+    coreSprite.setData('partId', corePart.partId);
+    coreSprite.setData('isCore', true);
+    coreSprite.setData('hp', corePart.maxHp);
+    coreSprite.setData('maxHp', corePart.maxHp);
+    coreSprite.setData('destructible', corePart.destructible);
+    coreSprite.setData('scoreValue', corePart.scoreValue ?? 0);
+    coreSprite.setData('spawnTime', this.time.now);
+    coreSprite.setBounce(1);
+    coreSprite.setCollideWorldBounds(true);
+    coreSprite.setDepth(2);
+
+    // Store boss-level metadata on the core.
+    coreSprite.setData('bossParts', bossDef.parts);
+    coreSprite.setData('bossPhases', bossDef.phases);
+    coreSprite.setData('bossPhaseIndex', 0);
+
+    // Create non-core parts as independent sprites (so bullets can collide with them)
+    bossDef.parts.forEach((part) => {
+      if (part.partId === corePart.partId) return;
+      const key = this.textures.exists(`${bossDef.id}::${part.partId}`)
+        ? `${bossDef.id}::${part.partId}`
+        : bossDef.id;
+      const partSprite = this.enemies.create(x + (part.offsetX ?? 0), y + (part.offsetY ?? 0), key);
+      if (!partSprite) return;
+      partSprite.setData('syncId', `${enemyId}::${part.partId}`);
+      partSprite.setData('enemyId', bossDef.id);
+      partSprite.setData('type', bossDef.id);
+      partSprite.setData('definition', bossDef);
+      partSprite.setData('isPart', true);
+      partSprite.setData('partId', part.partId);
+      partSprite.setData('isCore', false);
+      partSprite.setData('hp', part.maxHp);
+      partSprite.setData('maxHp', part.maxHp);
+      partSprite.setData('destructible', part.destructible);
+      partSprite.setData('scoreValue', part.scoreValue ?? 0);
+      partSprite.setData('parentEnemy', enemyId);
+      partSprite.setBounce(1);
+      partSprite.setCollideWorldBounds(true);
+      partSprite.setDepth(2);
+    });
+
+    return coreSprite;
   }
 
   initMapEnemies() {
@@ -921,6 +1102,65 @@ class MainScene extends Phaser.Scene {
   ) {
     bullet.destroy();
     const enemySprite = enemy as Phaser.GameObjects.Sprite;
+
+    // If this sprite represents a boss part, damage that part specifically.
+    const isPart = !!enemySprite.getData('isPart');
+    if (isPart) {
+      const destructible = enemySprite.getData('destructible');
+      if (!destructible) {
+        // Ping feedback for indestructible parts
+        enemySprite.setTintFill(0x999999);
+        this.time.delayedCall(80, () => {
+          if (enemySprite && enemySprite.active) enemySprite.clearTint();
+        });
+        return;
+      }
+
+      const hp = (enemySprite.getData('hp') as number) - 1;
+      enemySprite.setData('hp', hp);
+
+      if (hp <= 0) {
+        const isCore = !!enemySprite.getData('isCore');
+        const parentEnemyId = enemySprite.getData('parentEnemy') as string | undefined;
+
+        // Award score for this part
+        const partScore = (enemySprite.getData('scoreValue') as number) || 0;
+        this.score += partScore;
+
+        if (isCore) {
+          // Destroy all remaining parts that belong to this boss
+          this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
+            try {
+              if (e && e.getData && e.getData('parentEnemy') === parentEnemyId) {
+                this.emitter.explode(8, e.x, e.y);
+                e.destroy();
+              }
+            } catch (err) {
+              // ignore
+            }
+          });
+
+          this.broadcastEffect('explosion', enemySprite.x, enemySprite.y);
+          enemySprite.destroy();
+        } else {
+          this.showEnemyImpact(enemySprite);
+          enemySprite.destroy();
+        }
+
+        this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
+        return;
+      }
+
+      // Part was hit but not destroyed: flash
+      enemySprite.setTintFill(0xffffff);
+      this.time.delayedCall(50, () => {
+        if (enemySprite && enemySprite.active) enemySprite.clearTint();
+      });
+
+      return;
+    }
+
+    // Non-part enemies (legacy behavior)
     const hp = enemySprite.getData('hp') - 1;
     enemySprite.setData('hp', hp);
     if (hp <= 0) {
@@ -1041,12 +1281,30 @@ class MainScene extends Phaser.Scene {
     const nextEnemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
 
     enemies.forEach((enemy) => {
+      // Use the sync id to detect boss part sprites: format 'enemy-<n>::<partId>'
       let sprite = this.enemySprites[enemy.id];
       if (!sprite) {
-        const textureKey = this.textures.exists(enemy.type) ? enemy.type : 'enemy';
+        let textureKey = 'enemy';
+        const idParts = (enemy.id || '').split('::');
+        if (idParts.length === 2) {
+          const partKey = `${enemy.type}::${idParts[1]}`;
+          if (this.textures.exists(partKey)) textureKey = partKey;
+          else if (this.textures.exists(enemy.type)) textureKey = enemy.type;
+        } else {
+          textureKey = this.textures.exists(enemy.type) ? enemy.type : 'enemy';
+        }
+
         sprite = this.enemies.create(enemy.x, enemy.y, textureKey);
         if (!sprite) return;
         sprite.setData('syncId', enemy.id);
+
+        // If this is a part (id contains ::), store part metadata
+        if (idParts.length === 2) {
+          sprite.setData('isPart', true);
+          sprite.setData('partId', idParts[1]);
+          sprite.setData('parentEnemy', idParts[0]);
+          sprite.setData('isCore', idParts[1] === 'core');
+        }
       }
 
       sprite.setPosition(enemy.x, enemy.y);
@@ -1054,6 +1312,7 @@ class MainScene extends Phaser.Scene {
       sprite.setVisible(true);
       sprite.setActive(true);
       sprite.setData('type', enemy.type);
+      // lightweight hp on clients for visuals; authoritative HP stays on host
       sprite.setData(
         'hp',
         enemy.type === 'spawner' ? 100 : enemy.type === 'big' ? 5 : enemy.type === 'laser' ? 3 : 1
@@ -1387,15 +1646,152 @@ class MainScene extends Phaser.Scene {
 
         if (definition.type === 'boss') {
           const corePart = definition.parts.find((part) => part.isCore);
-          if (corePart && target) {
+          const isCoreSprite = !!enemy.getData('isCore');
+
+          // Rotate only the core sprite toward the target
+          if (isCoreSprite && corePart && target) {
             const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
             enemy.rotation = angle;
+          }
+
+          // Position non-core parts relative to their core
+          if (isCoreSprite) {
+            const parentId = enemy.getData('syncId') as string;
+            // find all child parts that reference this core
+            this.enemies.getChildren().forEach((child: Phaser.GameObjects.Sprite) => {
+              try {
+                if (!child || !child.active) return;
+                const parent = child.getData('parentEnemy') as string | undefined;
+                if (parent !== parentId) return;
+                const partId = child.getData('partId') as string;
+                const partDef = definition.parts.find((p) => p.partId === partId);
+                if (!partDef) return;
+                // Simple positioning: apply configured offsets relative to core
+                const tx = enemy.x + (partDef.offsetX ?? 0);
+                const ty = enemy.y + (partDef.offsetY ?? 0);
+                child.setPosition(tx, ty);
+                // Optionally match rotation
+                child.rotation = enemy.rotation;
+              } catch (err) {
+                // ignore
+              }
+            });
           }
         }
       });
     }
 
+    this.drawConnections();
     this.drawLasers();
+  }
+
+  private drawConnections() {
+    if (!this.connectionGraphics) return;
+    this.connectionGraphics.clear();
+
+    // iterate cores and draw connections to their child parts
+    this.enemies.getChildren().forEach((coreObj: Phaser.GameObjects.Sprite) => {
+      try {
+        const core = coreObj as Phaser.GameObjects.Sprite;
+        if (!core.active) return;
+        if (!core.getData('isCore')) return;
+
+        const parentId = core.getData('syncId') as string;
+        const definition = core.getData('definition') as EnemyConfig | undefined;
+        if (!definition || definition.type !== 'boss') return;
+
+        const parts = definition.parts;
+
+        // find child sprites that reference this core
+        this.enemies.getChildren().forEach((childObj: Phaser.GameObjects.Sprite) => {
+          try {
+            const child = childObj as Phaser.GameObjects.Sprite;
+            if (!child.active) return;
+            const p = child.getData('parentEnemy') as string | undefined;
+            if (p !== parentId) return;
+            const partId = child.getData('partId') as string;
+            const partDef = parts.find((pp) => pp.partId === partId);
+            if (!partDef || !partDef.connection || !partDef.connection.visuals) return;
+
+            const vis = partDef.connection.visuals as {
+              color: string;
+              thickness: number;
+              isDashed?: boolean;
+            };
+            const color = vis.color ? parseInt(vis.color, 16) : 0xffffff;
+            const thickness = vis.thickness ?? 2;
+            const isDashed = vis.isDashed ?? false;
+
+            if (partDef.connection.style === 'orbit') {
+              // draw an orbit ring at the offset distance
+              const ox = partDef.offsetX ?? 0;
+              const oy = partDef.offsetY ?? 0;
+              const radius = Math.sqrt(ox * ox + oy * oy) || 10;
+              this.connectionGraphics.lineStyle(thickness, color, 0.9);
+              if (isDashed) {
+                // draw dashed circle by drawing many small segments
+                const segments = 60;
+                const dash = 4;
+                for (let i = 0; i < segments; i += 1) {
+                  const a1 = (Math.PI * 2 * i) / segments;
+                  const a2 = (Math.PI * 2 * (i + 0.6)) / segments;
+                  const x1 = core.x + Math.cos(a1) * radius;
+                  const y1 = core.y + Math.sin(a1) * radius;
+                  const x2 = core.x + Math.cos(a2) * radius;
+                  const y2 = core.y + Math.sin(a2) * radius;
+                  this.connectionGraphics.beginPath();
+                  this.connectionGraphics.moveTo(x1, y1);
+                  this.connectionGraphics.lineTo(x2, y2);
+                  this.connectionGraphics.strokePath();
+                }
+              } else {
+                this.connectionGraphics.strokeCircle(core.x, core.y, radius);
+              }
+            } else {
+              // draw straight/tether line between core and part
+              const x1 = core.x;
+              const y1 = core.y;
+              const x2 = child.x;
+              const y2 = child.y;
+              this.connectionGraphics.lineStyle(thickness, color, 0.9);
+              if (isDashed) {
+                // dashed line
+                const dash = 8;
+                const gap = 6;
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const nx = dx / dist;
+                const ny = dy / dist;
+                let drawn = 0;
+                while (drawn < dist) {
+                  const segStart = drawn;
+                  const segEnd = Math.min(drawn + dash, dist);
+                  const sx = x1 + nx * segStart;
+                  const sy = y1 + ny * segStart;
+                  const ex = x1 + nx * segEnd;
+                  const ey = y1 + ny * segEnd;
+                  this.connectionGraphics.beginPath();
+                  this.connectionGraphics.moveTo(sx, sy);
+                  this.connectionGraphics.lineTo(ex, ey);
+                  this.connectionGraphics.strokePath();
+                  drawn += dash + gap;
+                }
+              } else {
+                this.connectionGraphics.beginPath();
+                this.connectionGraphics.moveTo(x1, y1);
+                this.connectionGraphics.lineTo(x2, y2);
+                this.connectionGraphics.strokePath();
+              }
+            }
+          } catch (err) {
+            // ignore per-child exceptions
+          }
+        });
+      } catch (err) {
+        // ignore per-core exceptions
+      }
+    });
   }
 
   private getLaserEndPoint(x: number, y: number, angle: number): { x: number; y: number } {
