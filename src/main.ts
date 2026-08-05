@@ -1992,7 +1992,7 @@ function selectMission(missionId: string) {
     if (statusText) {
       statusText.innerText = `Mission ${missionConfig.name} host ready. Peer ID: ${targetPeerId}`;
     }
-    startGameAsHost();
+    startGame(null);
   });
 
   hostPeer.on('connection', (conn: DataConnection) => {
@@ -2067,7 +2067,7 @@ function joinSector(targetPeerId: string, missionId: string) {
       if (statusText) {
         statusText.innerText = `Connected to mission ${missionId}. Starting game...`;
       }
-      startGameAsClient(conn);
+      startGame(conn);
     });
 
     conn.on('data', (data: PeerMessage) => {
@@ -2110,30 +2110,17 @@ function joinSector(targetPeerId: string, missionId: string) {
   });
 }
 
-function startGameAsHost() {
-  const lobbyOverlay = document.getElementById('lobby-overlay');
-  if (lobbyOverlay) {
-    lobbyOverlay.style.display = 'none';
-  }
-  const config: Phaser.Types.Core.GameConfig = {
-    type: Phaser.AUTO,
-    scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container', width: '100%', height: '100%' },
-    physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
-    scene: MainScene,
-  };
-  new Phaser.Game(config);
-}
+const config: Phaser.Types.Core.GameConfig = {
+  type: Phaser.AUTO,
+  scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container', width: '100%', height: '100%' },
+  physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
+  scene: MainScene,
+};
 
-function startGameAsClient(conn: DataConnection) {
-  const lobbyOverlay = document.getElementById('lobby-overlay');
-  if (lobbyOverlay) {
-    lobbyOverlay.style.display = 'none';
-  }
-  const config: Phaser.Types.Core.GameConfig = {
-    type: Phaser.AUTO,
-    scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container', width: '100%', height: '100%' },
-    physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
-    scene: MainScene,
-  };
+const lobbyOverlay = document.getElementById('lobby-overlay');
+
+function startGame(conn: DataConnection | null) {
+  lobbyOverlay.style.display = 'none';
+
   new Phaser.Game(config);
 }
