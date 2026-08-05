@@ -4,13 +4,15 @@ import Phaser from 'phaser';
 import Peer, { DataConnection, PeerError } from 'peerjs';
 import { Synth } from './Synth';
 import type { EnemyConfig } from './types/Enemy';
-import {
-  enemyDefinitionLookup,
-  enemyDefinitions,
-  MISSION_CONFIGS,
-  type MissionConfig,
-} from './data/data';
+import { enemyDefinitionLookup, enemyDefinitions, MISSION_CONFIGS } from './data/data';
 import { relayRush } from './data/missions/relay-rush';
+import {
+  buildMissionButtons,
+  disableMissionButtons,
+  enableMissionButtons,
+  hideLobbyOverlay,
+  setStatusText,
+} from './ui';
 
 type PlayerSnapshot = {
   x: number;
@@ -1939,38 +1941,17 @@ let connections: DataConnection[] = [];
 let gameScene: MainScene | null = null;
 
 const synth: Synth | null = new Synth();
-const statusText = document.getElementById('lobby-status');
 
-function buildMissionButtons() {
-  const container = document.getElementById('mission-buttons');
-  if (!container) return;
+buildMissionButtons(Object.values(MISSION_CONFIGS), selectMission);
 
-  container.innerHTML = '';
-  Object.values(MISSION_CONFIGS).forEach((missionConfig) => {
-    const button = document.createElement('button');
-    button.className = 'sector-btn mission-btn';
-    button.type = 'button';
-    button.textContent = missionConfig.name.toUpperCase();
-    button.dataset.mission = missionConfig.id;
-    button.addEventListener('click', () => selectMission(missionConfig.id));
-    container.appendChild(button);
-  });
-}
-
-buildMissionButtons();
-
-function selectMission(missionId: string) {
+export function selectMission(missionId: string) {
   const missionConfig = MISSION_CONFIGS[missionId] || MISSION_CONFIGS[relayRush.id];
   const targetPeerId = `neon-mission-${missionConfig.id}`;
   currentMissionId = missionConfig.id;
 
-  const missionButtons = Array.from(document.querySelectorAll<HTMLElement>('.mission-btn'));
-  missionButtons.forEach((button: HTMLButtonElement) => {
-    button.disabled = true;
-  });
-  if (statusText) {
-    statusText.innerText = `Preparing mission ${missionConfig.name}...`;
-  }
+  disableMissionButtons();
+
+  setStatusText(`Preparing mission ${missionConfig.name}...`);
 
   roomCode = targetPeerId;
   isHost = false;
@@ -1989,9 +1970,7 @@ function selectMission(missionId: string) {
 
   hostPeer.on('open', () => {
     isHost = true;
-    if (statusText) {
-      statusText.innerText = `Mission ${missionConfig.name} host ready. Peer ID: ${targetPeerId}`;
-    }
+    setStatusText(`Mission ${missionConfig.name} host ready. Peer ID: ${targetPeerId}`);
     startGame(null);
   });
 
@@ -2033,20 +2012,15 @@ function selectMission(missionId: string) {
         hostPeer.destroy();
         hostPeer = null;
       }
-      if (statusText) {
-        statusText.innerText = `Mission ${missionConfig.name} is already live. Joining...`;
-      }
+      setStatusText(`Mission ${missionConfig.name} is already live. Joining...`);
+
       joinSector(targetPeerId, missionId);
       return;
     }
 
-    if (statusText) {
-      statusText.innerText = `Peer error: ${message || 'Unknown error'}`;
-    }
-    const missionButtons = Array.from(document.querySelectorAll<HTMLElement>('.mission-btn'));
-    missionButtons.forEach((button: HTMLButtonElement) => {
-      button.disabled = false;
-    });
+    setStatusText(`Peer error: ${message || 'Unknown error'}`);
+
+    enableMissionButtons();
   });
 }
 
@@ -2057,16 +2031,12 @@ function joinSector(targetPeerId: string, missionId: string) {
   clientPeer = new Peer();
 
   clientPeer.on('open', () => {
-    if (statusText) {
-      statusText.innerText = `Connecting to mission ${missionId}...`;
-    }
+    setStatusText(`Connecting to mission ${missionId}...`);
     const conn = clientPeer.connect(targetPeerId, { reliable: true });
     hostConnection = conn;
 
     conn.on('open', () => {
-      if (statusText) {
-        statusText.innerText = `Connected to mission ${missionId}. Starting game...`;
-      }
+      setStatusText(`Connected to mission ${missionId}. Starting game...`);
       startGame(conn);
     });
 
@@ -2079,34 +2049,19 @@ function joinSector(targetPeerId: string, missionId: string) {
     });
 
     conn.on('close', () => {
-      if (statusText) {
-        statusText.innerText = `Connection to mission ${missionId} was lost.`;
-      }
-      const missionButtons = Array.from(document.querySelectorAll<HTMLElement>('.mission-btn'));
-      missionButtons.forEach((button: HTMLButtonElement) => {
-        button.disabled = false;
-      });
+      setStatusText(`Connection to mission ${missionId} was lost.`);
+      enableMissionButtons();
     });
 
     conn.on('error', (err: Error) => {
-      if (statusText) {
-        statusText.innerText = `Connection error: ${err.message || 'Unable to join mission'}`;
-      }
-      const missionButtons = Array.from(document.querySelectorAll<HTMLElement>('.mission-btn'));
-      missionButtons.forEach((button: HTMLButtonElement) => {
-        button.disabled = false;
-      });
+      setStatusText(`Connection error: ${err.message || 'Unable to join mission'}`);
+      enableMissionButtons();
     });
   });
 
   clientPeer.on('error', (err: Error) => {
-    if (statusText) {
-      statusText.innerText = `Peer error: ${err.message || 'Unable to create client peer'}`;
-    }
-    const missionButtons = Array.from(document.querySelectorAll<HTMLElement>('.mission-btn'));
-    missionButtons.forEach((button: HTMLButtonElement) => {
-      button.disabled = false;
-    });
+    setStatusText(`Peer error: ${err.message || 'Unable to create client peer'}`);
+    enableMissionButtons();
   });
 }
 
@@ -2117,10 +2072,7 @@ const config: Phaser.Types.Core.GameConfig = {
   scene: MainScene,
 };
 
-const lobbyOverlay = document.getElementById('lobby-overlay');
-
 function startGame(conn: DataConnection | null) {
-  lobbyOverlay.style.display = 'none';
-
+  hideLobbyOverlay();
   new Phaser.Game(config);
 }
