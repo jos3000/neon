@@ -1,3 +1,5 @@
+import { GameEvent } from '../events';
+
 type PlayerSnapshot = {
   x: number;
   y: number;
@@ -38,4 +40,11 @@ export type PeerEffectMessage = {
   x?: number;
   y?: number;
 };
-export type PeerMessage = PeerSnapshotMessage | PeerInputMessage | PeerEffectMessage;
+
+type PeerEventMessage = {
+  type: 'events';
+  events: GameEvent[];
+};
+
+export type PeerMessage =
+  PeerSnapshotMessage | PeerInputMessage | PeerEffectMessage | PeerEventMessage;

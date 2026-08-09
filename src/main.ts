@@ -22,6 +22,7 @@ import {
   PeerMessage,
 } from './types/Snapshot';
 import { Controls } from './controls';
+import { GameEvent } from './events';
 
 class MainScene extends Phaser.Scene {
   private score = 0;
@@ -65,6 +66,8 @@ class MainScene extends Phaser.Scene {
   private baseGraphics!: Phaser.GameObjects.Graphics;
   private laserGraphics!: Phaser.GameObjects.Graphics;
   private connectionGraphics!: Phaser.GameObjects.Graphics;
+
+  private eventQueue: GameEvent[] = [];
 
   constructor() {
     super({ key: 'MainScene' });
@@ -864,20 +867,75 @@ class MainScene extends Phaser.Scene {
     if (synth) synth.playExplosion();
   }
 
+  getBulletBySyncId(syncId: string): Phaser.Physics.Arcade.Sprite | null {
+    const bullet = this.bullets
+      .getChildren()
+      .find((b) => b.getData('syncId') === syncId) as Phaser.Physics.Arcade.Sprite;
+    return bullet && bullet.active ? bullet : null;
+  }
+
+  private handleEvent(event: GameEvent) {
+    switch (event.type) {
+      case 'bullet-destroyed': {
+        // destroy the bullet and show an impact effect
+        const bulletSprite = this.getBulletBySyncId(event.bulletId);
+        if (bulletSprite) {
+          this.emitter.explode(4, bulletSprite.x, bulletSprite.y);
+          bulletSprite.destroy();
+        }
+        break;
+      }
+      case 'bullet-created': {
+        // create a new bullet with the given properties
+        const bulletSprite = this.bullets.create(event.x, event.y, 'bullet');
+        bulletSprite.setData('syncId', event.bulletId);
+        bulletSprite.setData('angle', event.angle);
+        bulletSprite.setDepth(1);
+        if (isHost) {
+          bulletSprite.setData('speed', event.speed);
+          this.physics.velocityFromRotation(
+            event.angle,
+            event.speed,
+            bulletSprite.body.velocity as Phaser.Math.Vector2
+          );
+          // TODO: potentially put this in a seperate management function
+          bulletSprite.update = function (t: number, d: number) {
+            const born = this.getData('born') || 0 + d;
+            this.setData('born', born);
+            if (born > 1500) {
+              this.eventQueue.push({
+                type: 'bullet-destroyed',
+                bulletId: this.getData('syncId'),
+              });
+            }
+          };
+        }
+
+        break;
+      }
+    }
+  }
+
   hitWall(
     bullet: Phaser.Types.Physics.Arcade.GameObjectWithBody,
-    wall: Phaser.Types.Physics.Arcade.GameObjectWithBody
+    _wall: Phaser.Types.Physics.Arcade.GameObjectWithBody
   ) {
     const bulletSprite = bullet as Phaser.GameObjects.Sprite;
-    this.emitter.explode(4, bulletSprite.x, bulletSprite.y);
-    bulletSprite.destroy();
+    this.eventQueue.push({
+      type: 'bullet-destroyed',
+      bulletId: bulletSprite.getData('syncId'),
+    });
   }
 
   hitEnemy(
     bullet: Phaser.Types.Physics.Arcade.GameObjectWithBody,
     enemy: Phaser.Types.Physics.Arcade.GameObjectWithBody
   ) {
-    bullet.destroy();
+    const bulletSprite = bullet as Phaser.GameObjects.Sprite;
+    this.eventQueue.push({
+      type: 'bullet-destroyed',
+      bulletId: bulletSprite.getData('syncId'),
+    });
     const enemySprite = enemy as Phaser.GameObjects.Sprite;
 
     // If this sprite represents a boss part, damage that part specifically.
@@ -1037,23 +1095,6 @@ class MainScene extends Phaser.Scene {
     }
   }
 
-  private createBulletSprite(x: number, y: number, id: string) {
-    const bullet: Phaser.GameObjects.Sprite = this.bullets.create(x, y, 'bullet');
-    if (!bullet) return null;
-
-    bullet.setDepth(1);
-    bullet.setActive(true).setVisible(true);
-    bullet.setData('syncId', id);
-    bullet.setData('born', 0);
-    bullet.update = function (t: number, d: number) {
-      const born = this.getData('born') + d;
-      this.setData('born', born);
-      if (born > 1500) this.destroy();
-    };
-
-    return bullet;
-  }
-
   private syncEnemySprites(enemies: EnemySnapshot[]) {
     const nextEnemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
 
@@ -1124,35 +1165,12 @@ class MainScene extends Phaser.Scene {
   }
 
   private syncBulletSprites(bullets: BulletSnapshot[]) {
-    const nextBulletSprites: Record<string, Phaser.GameObjects.Sprite> = {};
-
     bullets.forEach((bullet) => {
-      let sprite = this.bulletSprites[bullet.id];
-      if (!sprite || !sprite.scene || !sprite.active) {
-        sprite = this.createBulletSprite(bullet.x, bullet.y, bullet.id);
-      }
-
+      let sprite = this.getBulletBySyncId(bullet.id);
       if (!sprite) return;
 
       sprite.setPosition(bullet.x, bullet.y);
-      sprite.setVisible(true);
-      sprite.setActive(true);
-      nextBulletSprites[bullet.id] = sprite;
     });
-
-    Object.keys(this.bulletSprites).forEach((id) => {
-      if (!nextBulletSprites[id]) {
-        const sprite = this.bulletSprites[id];
-        if (sprite && sprite.scene) {
-          sprite.setVisible(false);
-          sprite.setActive(false);
-          sprite.destroy();
-        }
-        delete this.bulletSprites[id];
-      }
-    });
-
-    this.bulletSprites = nextBulletSprites;
   }
 
   broadcastState() {
@@ -1302,16 +1320,14 @@ class MainScene extends Phaser.Scene {
         this.player!.rotation = shootInput.angle;
         if (isHost && !this.isInBaseArea(this.player!.x, this.player!.y) && time > this.lastFired) {
           const bulletId = `bullet-${++this.nextBulletId}`;
-          const bullet = this.createBulletSprite(this.player!.x, this.player!.y, bulletId);
-          if (bullet) {
-            this.physics.velocityFromRotation(
-              shootInput.angle,
-              1000,
-              bullet.body.velocity as Phaser.Math.Vector2
-            );
-            bullet.rotation = shootInput.angle;
-            this.broadcastEffect('shot');
-          }
+          this.eventQueue.push({
+            type: 'bullet-created',
+            bulletId,
+            x: this.player!.x,
+            y: this.player!.y,
+            angle: shootInput.angle,
+            speed: 1000,
+          });
           this.lastFired = time + this.fireRate;
         }
       } else if (moveX !== 0 || moveY !== 0) {
@@ -1343,20 +1359,14 @@ class MainScene extends Phaser.Scene {
         ) {
           const angle = rp.getData('aimAngle') || 0;
           const bulletId = `bullet-${++this.nextBulletId}`;
-          const bul: Phaser.GameObjects.Sprite | null = this.createBulletSprite(
-            rp.x,
-            rp.y,
-            bulletId
-          );
-          if (bul) {
-            this.physics.velocityFromRotation(
-              angle,
-              1000,
-              bul.body.velocity as Phaser.Math.Vector2
-            );
-            bul.rotation = angle;
-            this.broadcastEffect('shot');
-          }
+          this.eventQueue.push({
+            type: 'bullet-created',
+            bulletId,
+            x: rp.x,
+            y: rp.y,
+            angle,
+            speed: 1000,
+          });
           rp.setData('lastFired', time + this.fireRate);
         }
       }
@@ -1393,16 +1403,15 @@ class MainScene extends Phaser.Scene {
           ) {
             const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
             const bulletId = `bullet-${++this.nextBulletId}`;
-            const bullet = this.createBulletSprite(enemy.x, enemy.y, bulletId);
-            if (bullet) {
-              this.physics.velocityFromRotation(
-                angle,
-                definition.attack.projectileSpeed ?? 220,
-                bullet.body.velocity as Phaser.Math.Vector2
-              );
-              bullet.rotation = angle;
-              enemy.setData('nextShotAt', time + definition.attack.fireRateMs);
-            }
+            this.eventQueue.push({
+              type: 'bullet-created',
+              bulletId,
+              x: enemy.x,
+              y: enemy.y,
+              angle,
+              speed: definition.attack.projectileSpeed ?? 220,
+            });
+            enemy.setData('nextShotAt', time + definition.attack.fireRateMs);
           }
 
           if (
@@ -1415,15 +1424,14 @@ class MainScene extends Phaser.Scene {
               const angle =
                 Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y) + spread;
               const bulletId = `bullet-${++this.nextBulletId}`;
-              const bullet = this.createBulletSprite(enemy.x, enemy.y, bulletId);
-              if (bullet) {
-                this.physics.velocityFromRotation(
-                  angle,
-                  definition.attack.projectileSpeed ?? 180,
-                  bullet.body.velocity as Phaser.Math.Vector2
-                );
-                bullet.rotation = angle;
-              }
+              this.eventQueue.push({
+                type: 'bullet-created',
+                bulletId,
+                x: enemy.x,
+                y: enemy.y,
+                angle,
+                speed: definition.attack.projectileSpeed ?? 180,
+              });
             }
             enemy.setData('nextShotAt', time + definition.attack.fireRateMs);
           }
@@ -1470,6 +1478,29 @@ class MainScene extends Phaser.Scene {
 
     this.drawConnections();
     this.drawLasers();
+
+    if (isHost) {
+      this.broadcastEventQueue(this.eventQueue);
+    }
+
+    for (const event of this.eventQueue) {
+      this.handleEvent(event);
+    }
+    this.eventQueue = [];
+  }
+
+  private broadcastEventQueue(eventQueue: GameEvent[]) {
+    // Implementation for broadcasting event queue
+    connections.forEach((conn) =>
+      conn.send({
+        type: 'events',
+        events: eventQueue,
+      })
+    );
+  }
+
+  receiveEvents(events: GameEvent[]) {
+    this.eventQueue.push(...events);
   }
 
   private drawConnections() {
@@ -1686,7 +1717,6 @@ class MainScene extends Phaser.Scene {
 
   destroy() {
     this.controls.shutdown();
-    super.destroy();
   }
 }
 
@@ -1804,6 +1834,8 @@ function joinSector(targetPeerId: string, missionId: string) {
         gameScene.receiveState(data);
       } else if (data.type === 'effect' && gameScene && gameScene.receiveEffect) {
         gameScene.receiveEffect(data);
+      } else if (data.type === 'events' && gameScene && gameScene.receiveEvents) {
+        gameScene.receiveEvents(data.events);
       }
     });
 
