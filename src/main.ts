@@ -13,54 +13,15 @@ import {
   hideLobbyOverlay,
   setStatusText,
 } from './ui';
-
-type PlayerSnapshot = {
-  x: number;
-  y: number;
-  r: number;
-  isDead: boolean;
-};
-
-type EnemySnapshot = {
-  id: string;
-  x: number;
-  y: number;
-  type: string;
-  r: number;
-  laserState?: 'idle' | 'charging' | 'firing';
-  laserAngle?: number;
-};
-
-type BulletSnapshot = {
-  id: string;
-  x: number;
-  y: number;
-};
-
-type PeerSnapshotMessage = {
-  type: 'state';
-  score: number;
-  players: Record<string, PlayerSnapshot>;
-  enemies: EnemySnapshot[];
-  bullets: BulletSnapshot[];
-};
-
-type PeerInputMessage = {
-  type: 'input';
-  moveX: number;
-  moveY: number;
-  shoot: boolean;
-  aimAngle: number;
-};
-
-type PeerEffectMessage = {
-  type: 'effect';
-  effect: 'explosion' | 'hit' | 'spawn' | 'big-spawn' | 'death' | 'shot' | 'laser';
-  x?: number;
-  y?: number;
-};
-
-type PeerMessage = PeerSnapshotMessage | PeerInputMessage | PeerEffectMessage;
+import {
+  PeerEffectMessage,
+  PeerInputMessage,
+  EnemySnapshot,
+  BulletSnapshot,
+  PeerSnapshotMessage,
+  PeerMessage,
+} from './types/Snapshot';
+import { Controls } from './controls';
 
 class MainScene extends Phaser.Scene {
   private score = 0;
@@ -89,18 +50,7 @@ class MainScene extends Phaser.Scene {
   private pauseText!: Phaser.GameObjects.Text;
   private gameOverText!: Phaser.GameObjects.Text;
 
-  private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
-  private wasd!: Record<string, Phaser.Input.Keyboard.Key>;
-  private keyP!: Phaser.Input.Keyboard.Key;
-
-  private joyLeftBase!: Phaser.GameObjects.Arc;
-  private joyLeftThumb!: Phaser.GameObjects.Arc;
-  private joyRightBase!: Phaser.GameObjects.Arc;
-  private joyRightThumb!: Phaser.GameObjects.Arc;
-  private leftPointer: Phaser.Input.Pointer | null = null;
-  private rightPointer: Phaser.Input.Pointer | null = null;
-  private leftVector: { x: number; y: number } | null = null;
-  private rightVector: { angle: number; force: number } | null = null;
+  private controls!: Controls;
 
   private localPeerId: string | null = null;
   private hostPlayerSprite?: Phaser.GameObjects.Sprite;
@@ -503,35 +453,13 @@ class MainScene extends Phaser.Scene {
     });
 
     this.input.addPointer(2);
-    this.cursors = this.input.keyboard.createCursorKeys();
-    this.wasd = this.input.keyboard.addKeys('W,A,S,D') as Record<string, Phaser.Input.Keyboard.Key>;
-    this.keyP = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
-
-    this.joyLeftBase = this.add
-      .circle(0, 0, 60, 0x00ffff, 0.2)
-      .setVisible(false)
-      .setScrollFactor(0)
-      .setDepth(100);
-    this.joyLeftThumb = this.add
-      .circle(0, 0, 30, 0x00ffff, 0.6)
-      .setVisible(false)
-      .setScrollFactor(0)
-      .setDepth(100);
-    this.joyRightBase = this.add
-      .circle(0, 0, 60, 0xff00ff, 0.2)
-      .setVisible(false)
-      .setScrollFactor(0)
-      .setDepth(100);
-    this.joyRightThumb = this.add
-      .circle(0, 0, 30, 0xff00ff, 0.6)
-      .setVisible(false)
-      .setScrollFactor(0)
-      .setDepth(100);
-
-    this.input.on('pointerdown', this.handlePointerDown, this);
-    this.input.on('pointermove', this.handlePointerMove, this);
-    this.input.on('pointerup', this.handlePointerUp, this);
-    this.input.on('pointerout', this.handlePointerUp, this);
+    this.controls = new Controls(this, {
+      isGameOver: () => this.gameOver,
+      onRestart: () => {
+        if (isHost) this.scene.restart();
+      },
+    });
+    this.controls.initialize();
 
     if (isHost) {
       this.enemySpeed = 150;
@@ -557,171 +485,6 @@ class MainScene extends Phaser.Scene {
     }
 
     this.scale.on('resize', this.resize, this);
-  }
-
-  private getPrimaryGamepad(): Gamepad | null {
-    if (typeof navigator === 'undefined' || !navigator.getGamepads) return null;
-    const pads = navigator.getGamepads();
-    for (const pad of pads) {
-      if (pad && pad.connected) return pad;
-    }
-    return null;
-  }
-
-  private getStickVector(x: number, y: number): { x: number; y: number; force: number } | null {
-    const magnitude = Math.sqrt(x * x + y * y);
-    if (magnitude < 0.15) return null;
-    return {
-      x: x / magnitude,
-      y: y / magnitude,
-      force: magnitude,
-    };
-  }
-
-  private getGamepadMovement(): { x: number; y: number } | null {
-    const gamepad = this.getPrimaryGamepad();
-    if (!gamepad) return null;
-    const stick = this.getStickVector(gamepad.axes[0] ?? 0, gamepad.axes[1] ?? 0);
-    if (!stick) return null;
-    return { x: stick.x, y: stick.y };
-  }
-
-  private getGamepadAim(): { angle: number; force: number } | null {
-    const gamepad = this.getPrimaryGamepad();
-    if (!gamepad) return null;
-    const stick = this.getStickVector(gamepad.axes[2] ?? 0, gamepad.axes[3] ?? 0);
-    if (!stick) return null;
-    return { angle: Math.atan2(stick.y, stick.x), force: stick.force };
-  }
-
-  private getMovementInput(): { x: number; y: number } {
-    if (this.leftVector) {
-      return { x: this.leftVector.x, y: this.leftVector.y };
-    }
-
-    const gamepadMove = this.getGamepadMovement();
-    if (gamepadMove) {
-      return gamepadMove;
-    }
-
-    let moveX = 0;
-    let moveY = 0;
-    if (this.cursors.left.isDown || this.wasd.A.isDown) moveX = -1;
-    if (this.cursors.right.isDown || this.wasd.D.isDown) moveX = 1;
-    if (this.cursors.up.isDown || this.wasd.W.isDown) moveY = -1;
-    if (this.cursors.down.isDown || this.wasd.S.isDown) moveY = 1;
-    if (moveX !== 0 && moveY !== 0) {
-      const len = Math.sqrt(moveX * moveX + moveY * moveY);
-      moveX /= len;
-      moveY /= len;
-    }
-
-    return { x: moveX, y: moveY };
-  }
-
-  private getShootInput(): { shoot: boolean; angle: number } {
-    if (this.rightVector && this.rightVector.force > 0.2) {
-      return { shoot: true, angle: this.rightVector.angle };
-    }
-
-    const gamepadAim = this.getGamepadAim();
-    if (gamepadAim && gamepadAim.force > 0.2) {
-      return { shoot: true, angle: gamepadAim.angle };
-    }
-
-    if (this.input.activePointer.isDown && !this.leftPointer && !this.rightPointer) {
-      return {
-        shoot: true,
-        angle: Phaser.Math.Angle.Between(
-          this.player!.x,
-          this.player!.y,
-          this.input.activePointer.worldX,
-          this.input.activePointer.worldY
-        ),
-      };
-    }
-
-    return { shoot: false, angle: 0 };
-  }
-
-  handlePointerDown(pointer: Phaser.Input.Pointer) {
-    if (this.gameOver) {
-      if (isHost) this.scene.restart();
-      return;
-    }
-    const halfWidth = this.scale.width / 2;
-    if (pointer.x < halfWidth) {
-      if (!this.leftPointer) {
-        this.leftPointer = pointer;
-        this.joyLeftBase.setPosition(pointer.x, pointer.y).setVisible(true);
-        this.joyLeftThumb.setPosition(pointer.x, pointer.y).setVisible(true);
-        this.leftVector = { x: 0, y: 0 };
-      }
-    } else {
-      if (!this.rightPointer) {
-        this.rightPointer = pointer;
-        this.joyRightBase.setPosition(pointer.x, pointer.y).setVisible(true);
-        this.joyRightThumb.setPosition(pointer.x, pointer.y).setVisible(true);
-        this.rightVector = { angle: 0, force: 0 };
-      }
-    }
-  }
-
-  handlePointerMove(pointer: Phaser.Input.Pointer) {
-    if (this.gameOver || this.isPaused) return;
-    const maxRadius = 60;
-    if (pointer === this.leftPointer) {
-      let dist = Phaser.Math.Distance.Between(
-        this.joyLeftBase.x,
-        this.joyLeftBase.y,
-        pointer.x,
-        pointer.y
-      );
-      let angle = Phaser.Math.Angle.Between(
-        this.joyLeftBase.x,
-        this.joyLeftBase.y,
-        pointer.x,
-        pointer.y
-      );
-      if (dist > maxRadius) dist = maxRadius;
-      this.joyLeftThumb.x = this.joyLeftBase.x + Math.cos(angle) * dist;
-      this.joyLeftThumb.y = this.joyLeftBase.y + Math.sin(angle) * dist;
-      this.leftVector = {
-        x: Math.cos(angle) * (dist / maxRadius),
-        y: Math.sin(angle) * (dist / maxRadius),
-      };
-    } else if (pointer === this.rightPointer) {
-      let dist = Phaser.Math.Distance.Between(
-        this.joyRightBase.x,
-        this.joyRightBase.y,
-        pointer.x,
-        pointer.y
-      );
-      let angle = Phaser.Math.Angle.Between(
-        this.joyRightBase.x,
-        this.joyRightBase.y,
-        pointer.x,
-        pointer.y
-      );
-      if (dist > maxRadius) dist = maxRadius;
-      this.joyRightThumb.x = this.joyRightBase.x + Math.cos(angle) * dist;
-      this.joyRightThumb.y = this.joyRightBase.y + Math.sin(angle) * dist;
-      this.rightVector = { angle: angle, force: dist / maxRadius };
-    }
-  }
-
-  handlePointerUp(pointer: Phaser.Input.Pointer) {
-    if (pointer === this.leftPointer) {
-      this.leftPointer = null;
-      this.joyLeftBase.setVisible(false);
-      this.joyLeftThumb.setVisible(false);
-      this.leftVector = null;
-    } else if (pointer === this.rightPointer) {
-      this.rightPointer = null;
-      this.joyRightBase.setVisible(false);
-      this.joyRightThumb.setVisible(false);
-      this.rightVector = null;
-    }
   }
 
   private getPlayerColor(id: string): number {
@@ -1294,33 +1057,32 @@ class MainScene extends Phaser.Scene {
   private syncEnemySprites(enemies: EnemySnapshot[]) {
     const nextEnemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
 
-    enemies.forEach((enemy) => {
-      // Use the sync id to detect boss part sprites: format 'enemy-<n>::<partId>'
-      let sprite = this.enemySprites[enemy.id];
-      if (!sprite) {
-        let textureKey = 'enemy';
-        const idParts = (enemy.id || '').split('::');
-        if (idParts.length === 2) {
-          const partKey = `${enemy.type}::${idParts[1]}`;
-          if (this.textures.exists(partKey)) textureKey = partKey;
-          else if (this.textures.exists(enemy.type)) textureKey = enemy.type;
-        } else {
-          textureKey = this.textures.exists(enemy.type) ? enemy.type : 'enemy';
-        }
-
-        sprite = this.enemies.create(enemy.x, enemy.y, textureKey);
-        if (!sprite) return;
-        sprite.setData('syncId', enemy.id);
-
-        // If this is a part (id contains ::), store part metadata
-        if (idParts.length === 2) {
-          sprite.setData('isPart', true);
-          sprite.setData('partId', idParts[1]);
-          sprite.setData('parentEnemy', idParts[0]);
-          sprite.setData('isCore', idParts[1] === 'core');
-        }
+    function createEnemySprite(scene: MainScene, enemy: EnemySnapshot): Phaser.GameObjects.Sprite {
+      let textureKey = 'enemy';
+      const idParts = (enemy.id || '').split('::');
+      if (idParts.length === 2) {
+        const partKey = `${enemy.type}::${idParts[1]}`;
+        if (scene.textures.exists(partKey)) textureKey = partKey;
+        else if (scene.textures.exists(enemy.type)) textureKey = enemy.type;
+      } else {
+        textureKey = scene.textures.exists(enemy.type) ? enemy.type : 'enemy';
       }
 
+      const sprite = scene.enemies.create(enemy.x, enemy.y, textureKey);
+      sprite.setData('syncId', enemy.id);
+
+      // If this is a part (id contains ::), store part metadata
+      if (idParts.length === 2) {
+        sprite.setData('isPart', true);
+        sprite.setData('partId', idParts[1]);
+        sprite.setData('parentEnemy', idParts[0]);
+        sprite.setData('isCore', idParts[1] === 'core');
+      }
+
+      return sprite;
+    }
+
+    function syncEnemySprite(sprite: Phaser.GameObjects.Sprite, enemy: EnemySnapshot) {
       sprite.setPosition(enemy.x, enemy.y);
       sprite.rotation = enemy.r;
       sprite.setVisible(true);
@@ -1333,6 +1095,17 @@ class MainScene extends Phaser.Scene {
       );
       sprite.setData('laserState', enemy.laserState || 'idle');
       sprite.setData('laserAngle', enemy.laserAngle ?? enemy.r);
+    }
+
+    enemies.forEach((enemy) => {
+      // Use the sync id to detect boss part sprites: format 'enemy-<n>::<partId>'
+      let sprite = this.enemySprites[enemy.id];
+      if (!sprite) {
+        sprite = createEnemySprite(this, enemy);
+      }
+
+      syncEnemySprite(sprite, enemy);
+
       nextEnemySprites[enemy.id] = sprite;
     });
 
@@ -1423,8 +1196,8 @@ class MainScene extends Phaser.Scene {
     if (isHost) return;
     if (!hostConnection || !hostConnection.open) return;
 
-    const movement = this.getMovementInput();
-    const shootInput = this.getShootInput();
+    const movement = this.controls.getMovementInput();
+    const shootInput = this.controls.getShootInput(this.player);
 
     hostConnection.send({
       type: 'input',
@@ -1504,7 +1277,7 @@ class MainScene extends Phaser.Scene {
   }
 
   update(time: number, delta: number) {
-    if (Phaser.Input.Keyboard.JustDown(this.keyP)) {
+    if (this.controls.isPauseJustPressed()) {
       this.isPaused = !this.isPaused;
       this.pauseText.setVisible(this.isPaused);
       if (this.isPaused) this.physics.pause();
@@ -1516,14 +1289,14 @@ class MainScene extends Phaser.Scene {
     if (this.gameOver || this.isPaused || !this.gameStarted) return;
 
     if (!this.player!.getData('isDead')) {
-      const movement = this.getMovementInput();
+      const movement = this.controls.getMovementInput();
       const moveX = movement.x;
       const moveY = movement.y;
 
       const speed = 350;
       this.player!.setVelocity(moveX * speed, moveY * speed);
 
-      const shootInput = this.getShootInput();
+      const shootInput = this.controls.getShootInput(this.player);
 
       if (shootInput.shoot) {
         this.player!.rotation = shootInput.angle;
@@ -1862,25 +1635,6 @@ class MainScene extends Phaser.Scene {
     };
   }
 
-  private pointToSegmentDistance(
-    px: number,
-    py: number,
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number
-  ): number {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const l2 = dx * dx + dy * dy;
-    if (l2 === 0) return Phaser.Math.Distance.Between(px, py, x1, y1);
-    let t = ((px - x1) * dx + (py - y1) * dy) / l2;
-    t = Math.max(0, Math.min(1, t));
-    const projX = x1 + t * dx;
-    const projY = y1 + t * dy;
-    return Phaser.Math.Distance.Between(px, py, projX, projY);
-  }
-
   private drawLasers() {
     if (!this.laserGraphics) return;
     this.laserGraphics.clear();
@@ -1928,6 +1682,11 @@ class MainScene extends Phaser.Scene {
         this.laserGraphics.lineBetween(e.x, e.y, endPos.x, endPos.y);
       }
     });
+  }
+
+  destroy() {
+    this.controls.shutdown();
+    super.destroy();
   }
 }
 
