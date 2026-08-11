@@ -1,3 +1,4 @@
+import { Snapshot } from '@geckos.io/snapshot-interpolation/lib/types';
 import { GameEvent } from '../events';
 
 type PlayerSnapshot = {
@@ -46,5 +47,14 @@ type PeerEventMessage = {
   events: GameEvent[];
 };
 
+export type PeerPositionMessage = {
+  type: 'positions';
+  snapshot: Snapshot;
+};
+
 export type PeerMessage =
-  PeerSnapshotMessage | PeerInputMessage | PeerEffectMessage | PeerEventMessage;
+  | PeerSnapshotMessage
+  | PeerInputMessage
+  | PeerEffectMessage
+  | PeerEventMessage
+  | PeerPositionMessage;

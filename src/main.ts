@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 
+import { SnapshotInterpolation } from '@geckos.io/snapshot-interpolation';
 import Phaser from 'phaser';
 import Peer, { DataConnection, PeerError } from 'peerjs';
 import { Synth } from './Synth';
@@ -20,9 +21,11 @@ import {
   BulletSnapshot,
   PeerSnapshotMessage,
   PeerMessage,
+  PeerPositionMessage,
 } from './types/Snapshot';
 import { Controls } from './controls';
 import { GameEvent } from './events';
+import { Snapshot } from '@geckos.io/snapshot-interpolation/lib/types';
 
 class MainScene extends Phaser.Scene {
   private score = 0;
@@ -68,6 +71,9 @@ class MainScene extends Phaser.Scene {
   private connectionGraphics!: Phaser.GameObjects.Graphics;
 
   private eventQueue: GameEvent[] = [];
+  private entityLookup: Record<string, Phaser.GameObjects.Sprite> = {};
+
+  private SI = new SnapshotInterpolation();
 
   constructor() {
     super({ key: 'MainScene' });
@@ -882,12 +888,14 @@ class MainScene extends Phaser.Scene {
         if (bulletSprite) {
           this.emitter.explode(4, bulletSprite.x, bulletSprite.y);
           bulletSprite.destroy();
+          delete this.entityLookup[event.bulletId];
         }
         break;
       }
       case 'bullet-created': {
         // create a new bullet with the given properties
         const bulletSprite = this.bullets.create(event.x, event.y, 'bullet');
+        this.entityLookup[event.bulletId] = bulletSprite;
         bulletSprite.setData('syncId', event.bulletId);
         bulletSprite.setData('angle', event.angle);
         bulletSprite.setDepth(1);
@@ -1164,15 +1172,6 @@ class MainScene extends Phaser.Scene {
     this.enemySprites = nextEnemySprites;
   }
 
-  private syncBulletSprites(bullets: BulletSnapshot[]) {
-    bullets.forEach((bullet) => {
-      let sprite = this.getBulletBySyncId(bullet.id);
-      if (!sprite) return;
-
-      sprite.setPosition(bullet.x, bullet.y);
-    });
-  }
-
   broadcastState() {
     if (!isHost || !connections.length) return;
     const players: Record<string, { x: number; y: number; r: number; isDead: boolean }> = {};
@@ -1232,7 +1231,6 @@ class MainScene extends Phaser.Scene {
     this.scoreText.setText('SCORE: ' + data.score + ' | ROLE: CLIENT');
 
     this.syncEnemySprites(data.enemies || []);
-    this.syncBulletSprites(data.bullets || []);
 
     if (data.players) {
       for (const id in data.players) {
@@ -1474,6 +1472,34 @@ class MainScene extends Phaser.Scene {
           }
         }
       });
+
+      const snapshot = this.SI.snapshot.create(
+        Object.entries(this.entityLookup).map(([id, p]) => ({
+          id,
+          x: p.x,
+          y: p.y,
+          r: p.rotation,
+        }))
+      );
+      this.SI.vault.add(snapshot);
+      this.broadcastPositions(snapshot);
+    } else {
+      // calculate the interpolation for the parameters x and y and return the snapshot
+      const snapshot = this.SI.calcInterpolation('x y r'); // [deep: string] as optional second parameter
+
+      // access your state
+      if (snapshot) {
+        const { state } = snapshot;
+
+        for (const pos of state) {
+          const entity = this.entityLookup[pos.id];
+          if (entity) {
+            entity.x = pos.x as number;
+            entity.y = pos.y as number;
+            entity.rotation = pos.r as number;
+          }
+        }
+      }
     }
 
     this.drawConnections();
@@ -1487,6 +1513,15 @@ class MainScene extends Phaser.Scene {
       this.handleEvent(event);
     }
     this.eventQueue = [];
+  }
+
+  private broadcastPositions(snapshot: Snapshot) {
+    if (!isHost || !connections.length) return;
+    const message: PeerPositionMessage = {
+      type: 'positions',
+      snapshot,
+    };
+    connections.forEach((conn) => conn.send(message));
   }
 
   private broadcastEventQueue(eventQueue: GameEvent[]) {
@@ -1718,6 +1753,11 @@ class MainScene extends Phaser.Scene {
   destroy() {
     this.controls.shutdown();
   }
+
+  receivePositions(snapshot: Snapshot) {
+    if (isHost || !snapshot) return;
+    this.SI.snapshot.add(snapshot);
+  }
 }
 
 let isHost = false;
@@ -1836,6 +1876,8 @@ function joinSector(targetPeerId: string, missionId: string) {
         gameScene.receiveEffect(data);
       } else if (data.type === 'events' && gameScene && gameScene.receiveEvents) {
         gameScene.receiveEvents(data.events);
+      } else if (data.type === 'positions' && gameScene && gameScene.receivePositions) {
+        gameScene.receivePositions(data.snapshot);
       }
     });
 
