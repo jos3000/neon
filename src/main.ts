@@ -1811,8 +1811,6 @@ export function selectMission(missionId: string) {
     conn.on('data', (data: PeerMessage) => {
       if (data.type === 'input' && gameScene && gameScene.handleRemoteInput) {
         gameScene.handleRemoteInput(conn.peer, data);
-      } else if (data.type === 'effect' && gameScene && gameScene.receiveEffect) {
-        gameScene.receiveEffect(data);
       }
     });
     conn.on('close', () => {
@@ -1870,14 +1868,21 @@ function joinSector(targetPeerId: string, missionId: string) {
     });
 
     conn.on('data', (data: PeerMessage) => {
-      if (data.type === 'state' && gameScene && gameScene.receiveState) {
-        gameScene.receiveState(data);
-      } else if (data.type === 'effect' && gameScene && gameScene.receiveEffect) {
-        gameScene.receiveEffect(data);
-      } else if (data.type === 'events' && gameScene && gameScene.receiveEvents) {
-        gameScene.receiveEvents(data.events);
-      } else if (data.type === 'positions' && gameScene && gameScene.receivePositions) {
-        gameScene.receivePositions(data.snapshot);
+      if (gameScene) {
+        switch (data.type) {
+          case 'state':
+            gameScene.receiveState(data);
+            break;
+          case 'effect':
+            gameScene.receiveEffect(data);
+            break;
+          case 'events':
+            gameScene.receiveEvents(data.events);
+            break;
+          case 'positions':
+            gameScene.receivePositions(data.snapshot);
+            break;
+        }
       }
     });
 
