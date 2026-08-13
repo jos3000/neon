@@ -12,8 +12,9 @@ import {
   hideLobbyOverlay,
   setStatusText,
 } from './ui';
-import { PeerMessage } from './types/Snapshot';
+import { ClientPeerMessage, HostPeerMessage, PeerMessage } from './types/Snapshot';
 import { MainScene } from './MainScene';
+import { createOrJoinPeerId } from './network';
 
 export let isHost = false;
 export let currentMissionId = relayRush.id;
@@ -41,125 +42,45 @@ export function selectMission(missionId: string) {
 
   setStatusText(`Preparing mission ${missionConfig.name}...`);
 
-  roomCode = targetPeerId;
-  isHost = false;
-  hostConnection = null;
-
-  if (hostPeer) {
-    hostPeer.destroy();
-    hostPeer = null;
-  }
-  if (clientPeer) {
-    clientPeer.destroy();
-    clientPeer = null;
-  }
-
-  hostPeer = new Peer(targetPeerId);
-
-  hostPeer.on('open', () => {
-    isHost = true;
-    setStatusText(`Mission ${missionConfig.name} host ready. Peer ID: ${targetPeerId}`);
-    startGame(null);
-  });
-
-  hostPeer.on('connection', (conn: DataConnection) => {
-    connections.push(conn);
-    conn.on('open', () => {
-      console.log('Client connected:', conn.peer);
-    });
-    conn.on('data', (data: PeerMessage) => {
-      if (data.type === 'input' && gameScene && gameScene.handleRemoteInput) {
-        gameScene.handleRemoteInput(conn.peer, data);
-      }
-    });
-    conn.on('close', () => {
-      const idx = connections.indexOf(conn);
-      if (idx > -1) connections.splice(idx, 1);
-      if (gameScene && gameScene.removeRemotePlayer) {
-        gameScene.removeRemotePlayer(conn.peer);
-      }
-    });
-    conn.on('error', (err: unknown) => {
-      console.warn('Connection error:', err);
-    });
-  });
-
-  hostPeer.on('error', (err: Error & { type?: string }) => {
-    const message = (err && (err.message || err.type)) || '';
-    const isUnavailableId =
-      err &&
-      (err.type === 'unavailable-id' ||
-        err.type === 'peer-unavailable' ||
-        message.toLowerCase().includes('unavailable') ||
-        message.toLowerCase().includes('taken'));
-
-    if (isUnavailableId) {
-      if (hostPeer) {
-        hostPeer.destroy();
-        hostPeer = null;
-      }
-      setStatusText(`Mission ${missionConfig.name} is already live. Joining...`);
-
-      joinSector(targetPeerId, missionId);
-      return;
-    }
-
-    setStatusText(`Peer error: ${message || 'Unknown error'}`);
-
-    enableMissionButtons();
-  });
-}
-
-function joinSector(targetPeerId: string, missionId: string) {
-  isHost = false;
-  roomCode = targetPeerId;
-  currentMissionId = missionId;
-  clientPeer = new Peer();
-
-  clientPeer.on('open', () => {
-    setStatusText(`Connecting to mission ${missionId}...`);
-    const conn = clientPeer.connect(targetPeerId, { reliable: true });
-    hostConnection = conn;
-
-    conn.on('open', () => {
-      setStatusText(`Connected to mission ${missionId}. Starting game...`);
-      startGame(conn);
-    });
-
-    conn.on('data', (data: PeerMessage) => {
-      if (gameScene) {
-        switch (data.type) {
-          case 'state':
-            gameScene.receiveState(data);
-            break;
-          case 'effect':
-            gameScene.receiveEffect(data);
-            break;
-          case 'events':
-            gameScene.receiveEvents(data.events);
-            break;
-          case 'positions':
-            gameScene.receivePositions(data.snapshot);
-            break;
+  createOrJoinPeerId<HostPeerMessage, ClientPeerMessage>(
+    targetPeerId,
+    (hostEvent) => {
+      switch (hostEvent.type) {
+        case 'start': {
+          hostEvent.sendMessage; // this should be an argument
+          startGame(null);
+          break;
+        }
+        case 'message': {
+          gameScene && gameScene.receiveMessageFromClient(hostEvent.message);
+          break;
+        }
+        case 'disconnected': {
+          gameScene && gameScene.handleClientDisconnect(hostEvent.id);
+          enableMissionButtons();
+          break;
         }
       }
-    });
-
-    conn.on('close', () => {
-      setStatusText(`Connection to mission ${missionId} was lost.`);
-      enableMissionButtons();
-    });
-
-    conn.on('error', (err: Error) => {
-      setStatusText(`Connection error: ${err.message || 'Unable to join mission'}`);
-      enableMissionButtons();
-    });
-  });
-
-  clientPeer.on('error', (err: Error) => {
-    setStatusText(`Peer error: ${err.message || 'Unable to create client peer'}`);
-    enableMissionButtons();
-  });
+    },
+    (clientEvent) => {
+      switch (clientEvent.type) {
+        case 'start': {
+          clientEvent.sendMessage; // this should be an argument
+          startGame(null);
+          break;
+        }
+        case 'message': {
+          gameScene && gameScene.receiveMessageFromHost(clientEvent.message);
+          break;
+        }
+        case 'disconnected': {
+          gameScene && gameScene.handleHostDisconnect();
+          enableMissionButtons();
+          break;
+        }
+      }
+    }
+  );
 }
 
 const config: Phaser.Types.Core.GameConfig = {

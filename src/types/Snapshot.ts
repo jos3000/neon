@@ -52,9 +52,7 @@ export type PeerPositionMessage = {
   snapshot: Snapshot;
 };
 
-export type PeerMessage =
-  | PeerSnapshotMessage
-  | PeerInputMessage
-  | PeerEffectMessage
-  | PeerEventMessage
-  | PeerPositionMessage;
+export type HostPeerMessage =
+  PeerSnapshotMessage | PeerEffectMessage | PeerEventMessage | PeerPositionMessage;
+
+export type ClientPeerMessage = PeerInputMessage;
