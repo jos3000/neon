@@ -12,7 +12,7 @@ import {
   hideLobbyOverlay,
   setStatusText,
 } from './ui';
-import { ClientPeerMessage, HostPeerMessage, PeerMessage } from './types/Snapshot';
+import { ClientPeerMessage, HostPeerMessage } from './types/Snapshot';
 import { MainScene } from './MainScene';
 import { createOrJoinPeerId } from './network';
 
@@ -21,7 +21,6 @@ export let currentMissionId = relayRush.id;
 export let roomCode: string | null = null;
 export let hostConnection: DataConnection | null = null;
 export let clientPeer: Peer | null = null;
-let hostPeer: Peer | null = null;
 export let connections: DataConnection[] = [];
 export let gameScene: MainScene | null = null;
 
@@ -52,7 +51,7 @@ export function selectMission(missionId: string) {
           break;
         }
         case 'message': {
-          gameScene && gameScene.receiveMessageFromClient(hostEvent.message);
+          gameScene && gameScene.receiveMessageFromClient(hostEvent.id, hostEvent.message);
           break;
         }
         case 'disconnected': {

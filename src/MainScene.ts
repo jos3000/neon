@@ -19,6 +19,8 @@ import type { EnemyConfig } from './types/Enemy';
 import {
   PeerEffectMessage,
   PeerInputMessage,
+  HostPeerMessage,
+  ClientPeerMessage,
   EnemySnapshot,
   PeerSnapshotMessage,
   PeerPositionMessage,
@@ -1276,6 +1278,52 @@ export class MainScene extends Phaser.Scene {
           }
         }
       }
+    }
+  }
+
+  // Called on clients when a host-originating message arrives
+  receiveMessageFromHost(message: HostPeerMessage) {
+    if (!message || (message as any).type === undefined) return;
+    switch (message.type) {
+      case 'state':
+        this.receiveState(message);
+        break;
+      case 'positions':
+        this.receivePositions(message.snapshot);
+        break;
+      case 'effect':
+        this.receiveEffect(message);
+        break;
+      case 'events':
+        this.receiveEvents(message.events);
+        break;
+      default:
+        // unknown host message
+        break;
+    }
+  }
+
+  // Called on host when a client-originating message arrives. `peerId` is the client's id.
+  receiveMessageFromClient(peerId: string, message: ClientPeerMessage) {
+    if (!message || (message as any).type === undefined) return;
+    if (message.type === 'input') {
+      this.handleRemoteInput(peerId, message);
+    }
+  }
+
+  handleClientDisconnect(peerId: string) {
+    // remove any remote player state and indicators
+    this.removeRemotePlayer(peerId);
+  }
+
+  handleHostDisconnect() {
+    // Client was disconnected from host — pause / end game
+    this.gameOver = true;
+    if (this.gameOverText) this.gameOverText.setVisible(true);
+    try {
+      this.physics.pause();
+    } catch (err) {
+      // ignore if physics not available
     }
   }
 
