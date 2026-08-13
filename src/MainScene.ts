@@ -2,7 +2,7 @@ import { SnapshotInterpolation } from '@geckos.io/snapshot-interpolation';
 import { Snapshot } from '@geckos.io/snapshot-interpolation/lib/types';
 import Phaser from 'phaser';
 import { Controls } from './controls';
-import { enemyDefinitions, MISSION_CONFIGS, enemyDefinitionLookup } from './data/data';
+import { MISSION_CONFIGS, enemyDefinitionLookup } from './data/data';
 import { relayRush } from './data/missions/relay-rush';
 import { GameEvent } from './events';
 import { currentMissionId, setGameScene } from './main';
