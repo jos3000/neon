@@ -5,16 +5,7 @@ import { Controls } from './controls';
 import { enemyDefinitions, MISSION_CONFIGS, enemyDefinitionLookup } from './data/data';
 import { relayRush } from './data/missions/relay-rush';
 import { GameEvent } from './events';
-import {
-  currentMissionId,
-  isHost,
-  clientPeer,
-  roomCode,
-  synth,
-  connections,
-  hostConnection,
-  setGameScene,
-} from './main';
+import { currentMissionId, setGameScene } from './main';
 import type { EnemyConfig } from './types/Enemy';
 import {
   PeerEffectMessage,
@@ -25,6 +16,9 @@ import {
   PeerSnapshotMessage,
   PeerPositionMessage,
 } from './types/Snapshot';
+import { Synth } from './Synth';
+
+const synth: Synth | null = new Synth();
 
 export class MainScene extends Phaser.Scene {
   private score = 0;
@@ -74,8 +68,19 @@ export class MainScene extends Phaser.Scene {
 
   private SI = new SnapshotInterpolation();
 
-  constructor() {
+  private isHost = false;
+  private roomCode: string | null = null;
+  private sendPeerMessage: ((msg: any) => void) | null = null;
+
+  constructor(opts?: {
+    isHost?: boolean;
+    roomCode?: string | null;
+    sendPeerMessage?: (msg: any) => void;
+  }) {
     super({ key: 'MainScene' });
+    this.isHost = !!opts?.isHost;
+    this.roomCode = opts?.roomCode ?? null;
+    this.sendPeerMessage = opts?.sendPeerMessage ?? null;
   }
 
   private createEnemyTexture(definition: EnemyConfig) {
@@ -392,12 +397,11 @@ export class MainScene extends Phaser.Scene {
     this.player = this.physics.add.sprite(
       this.baseCenter.x,
       this.baseCenter.y,
-      isHost ? 'player' : 'guest'
+      this.isHost ? 'player' : 'guest'
     );
     this.player.setDepth(2);
     this.player.setCollideWorldBounds(true);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
-    this.localPeerId = clientPeer && clientPeer.id ? clientPeer.id : null;
 
     this.bullets = this.physics.add.group({ runChildUpdate: true });
     this.enemies = this.physics.add.group();
@@ -422,7 +426,7 @@ export class MainScene extends Phaser.Scene {
         'SCORE: 0 | MISSION: ' +
           missionConf.name +
           ' | ROLE: ' +
-          (isHost ? 'HOST (' + roomCode + ')' : 'CLIENT'),
+          (this.isHost ? 'HOST (' + (this.roomCode ?? '') + ')' : 'CLIENT'),
         {
           fontSize: '20px',
           fontFamily: 'Courier',
@@ -464,12 +468,12 @@ export class MainScene extends Phaser.Scene {
     this.controls = new Controls(this, {
       isGameOver: () => this.gameOver,
       onRestart: () => {
-        if (isHost) this.scene.restart();
+        if (this.isHost) this.scene.restart();
       },
     });
     this.controls.initialize();
 
-    if (isHost) {
+    if (this.isHost) {
       this.enemySpeed = 150;
       this.initMapEnemies();
 
@@ -532,7 +536,7 @@ export class MainScene extends Phaser.Scene {
       trackedSprites.push({ id, sprite });
     });
 
-    if (isHost) {
+    if (this.isHost) {
       Object.entries(this.remotePlayers).forEach(([id, sprite]) => {
         trackedSprites.push({ id: `remote-${id}`, sprite });
       });
@@ -740,7 +744,7 @@ export class MainScene extends Phaser.Scene {
       const sprite = this.createEnemySprite(definition, spawn.x, spawn.y);
       if (!sprite) return;
 
-      if (isHost) {
+      if (this.isHost) {
         this.broadcastEffect(definition.type === 'boss' ? 'big-spawn' : 'spawn');
       }
     });
@@ -859,10 +863,10 @@ export class MainScene extends Phaser.Scene {
 
   private broadcastEffect(effect: PeerEffectMessage['effect'], x?: number, y?: number) {
     this.applyEffect(effect, x, y);
-    if (!isHost) return;
-    if (!connections.length) return;
+    if (!this.isHost) return;
+    if (!this.sendPeerMessage) return;
     const message: PeerEffectMessage = { type: 'effect', effect, x, y };
-    connections.forEach((conn) => conn.send(message));
+    this.sendPeerMessage(message);
   }
 
   private showEnemyImpact(enemySprite: Phaser.GameObjects.Sprite | null) {
@@ -898,7 +902,7 @@ export class MainScene extends Phaser.Scene {
         bulletSprite.setData('syncId', event.bulletId);
         bulletSprite.setData('angle', event.angle);
         bulletSprite.setDepth(1);
-        if (isHost) {
+        if (this.isHost) {
           bulletSprite.setData('speed', event.speed);
           this.physics.velocityFromRotation(
             event.angle,
@@ -989,7 +993,9 @@ export class MainScene extends Phaser.Scene {
           enemySprite.destroy();
         }
 
-        this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
+        this.scoreText.setText(
+          'SCORE: ' + this.score + ' | ROLE: HOST (' + (this.roomCode ?? '') + ')'
+        );
         return;
       }
 
@@ -1010,7 +1016,9 @@ export class MainScene extends Phaser.Scene {
       enemySprite.destroy();
       const scoreValue = enemySprite.getData('scoreValue') as number | undefined;
       this.score += scoreValue ?? 10;
-      this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + roomCode + ')');
+      this.scoreText.setText(
+        'SCORE: ' + this.score + ' | ROLE: HOST (' + (this.roomCode ?? '') + ')'
+      );
     } else {
       enemySprite.setTintFill(0xffffff);
       this.time.delayedCall(50, () => {
@@ -1072,7 +1080,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   handleRemoteInput(peerId: string, data: PeerInputMessage) {
-    if (!isHost || this.gameOver) return;
+    if (!this.isHost || this.gameOver) return;
     if (!this.remotePlayers[peerId]) {
       const rp = this.physics.add.sprite(this.baseCenter.x, this.baseCenter.y, 'guest');
       rp.setDepth(2);
@@ -1172,7 +1180,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   broadcastState() {
-    if (!isHost || !connections.length) return;
+    if (!this.isHost || !this.sendPeerMessage) return;
     const players: Record<string, { x: number; y: number; r: number; isDead: boolean }> = {};
     players['host'] = {
       x: this.player!.x,
@@ -1205,17 +1213,19 @@ export class MainScene extends Phaser.Scene {
       })),
     };
 
-    connections.forEach((conn) => conn.send(state));
+    // send state to connected clients via stored send function
+    this.sendPeerMessage(state);
   }
 
   sendInput() {
-    if (isHost) return;
-    if (!hostConnection || !hostConnection.open) return;
+    if (this.isHost) return;
+    const send = this.sendPeerMessage;
+    if (!send) return;
 
     const movement = this.controls.getMovementInput();
     const shootInput = this.controls.getShootInput(this.player);
 
-    hostConnection.send({
+    send({
       type: 'input',
       moveX: movement.x,
       moveY: movement.y,
@@ -1225,7 +1235,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   receiveState(data: PeerSnapshotMessage) {
-    if (isHost || !data || data.type !== 'state') return;
+    if (this.isHost || !data || data.type !== 'state') return;
     this.score = data.score;
     this.scoreText.setText('SCORE: ' + data.score + ' | ROLE: CLIENT');
 
@@ -1328,7 +1338,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   receiveEffect(data: PeerEffectMessage) {
-    if (isHost || !data || data.type !== 'effect') return;
+    if (this.isHost || !data || data.type !== 'effect') return;
     this.applyEffect(data.effect, data.x, data.y);
   }
 
@@ -1361,7 +1371,11 @@ export class MainScene extends Phaser.Scene {
 
       if (shootInput.shoot) {
         this.player!.rotation = shootInput.angle;
-        if (isHost && !this.isInBaseArea(this.player!.x, this.player!.y) && time > this.lastFired) {
+        if (
+          this.isHost &&
+          !this.isInBaseArea(this.player!.x, this.player!.y) &&
+          time > this.lastFired
+        ) {
           const bulletId = `bullet-${++this.nextBulletId}`;
           this.eventQueue.push({
             type: 'bullet-created',
@@ -1380,7 +1394,7 @@ export class MainScene extends Phaser.Scene {
       this.player!.setVelocity(0, 0);
     }
 
-    if (isHost) {
+    if (this.isHost) {
       const speed = 350;
       for (const id in this.remotePlayers) {
         const rp = this.remotePlayers[id];
@@ -1550,7 +1564,7 @@ export class MainScene extends Phaser.Scene {
     this.drawConnections();
     this.drawLasers();
 
-    if (isHost) {
+    if (this.isHost) {
       this.broadcastEventQueue(this.eventQueue);
     }
 
@@ -1561,22 +1575,15 @@ export class MainScene extends Phaser.Scene {
   }
 
   private broadcastPositions(snapshot: Snapshot) {
-    if (!isHost || !connections.length) return;
-    const message: PeerPositionMessage = {
-      type: 'positions',
-      snapshot,
-    };
-    connections.forEach((conn) => conn.send(message));
+    if (!this.isHost || !this.sendPeerMessage) return;
+    const message: PeerPositionMessage = { type: 'positions', snapshot };
+    this.sendPeerMessage(message);
   }
 
   private broadcastEventQueue(eventQueue: GameEvent[]) {
-    // Implementation for broadcasting event queue
-    connections.forEach((conn) =>
-      conn.send({
-        type: 'events',
-        events: eventQueue,
-      })
-    );
+    if (!this.isHost || !this.sendPeerMessage) return;
+    const msg = { type: 'events', events: eventQueue };
+    this.sendPeerMessage(msg);
   }
 
   receiveEvents(events: GameEvent[]) {
@@ -1752,7 +1759,7 @@ export class MainScene extends Phaser.Scene {
 
     const activeEnemies: Array<{ x: number; y: number; state?: string; angle?: number }> = [];
 
-    if (isHost) {
+    if (this.isHost) {
       this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
         if (e.active && e.getData('type') === 'laser') {
           activeEnemies.push({
@@ -1800,7 +1807,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   receivePositions(snapshot: Snapshot) {
-    if (isHost || !snapshot) return;
+    if (this.isHost || !snapshot) return;
     this.SI.snapshot.add(snapshot);
   }
 }

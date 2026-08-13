@@ -1,8 +1,6 @@
 /// <reference types="vite/client" />
 
 import Phaser from 'phaser';
-import Peer, { DataConnection, PeerError } from 'peerjs';
-import { Synth } from './Synth';
 import { MISSION_CONFIGS } from './data/data';
 import { relayRush } from './data/missions/relay-rush';
 import {
@@ -16,19 +14,12 @@ import { ClientPeerMessage, HostPeerMessage } from './types/Snapshot';
 import { MainScene } from './MainScene';
 import { createOrJoinPeerId } from './network';
 
-export let isHost = false;
 export let currentMissionId = relayRush.id;
-export let roomCode: string | null = null;
-export let hostConnection: DataConnection | null = null;
-export let clientPeer: Peer | null = null;
-export let connections: DataConnection[] = [];
 export let gameScene: MainScene | null = null;
 
 export function setGameScene(scene: MainScene) {
   gameScene = scene;
 }
-
-export const synth: Synth | null = new Synth();
 
 buildMissionButtons(Object.values(MISSION_CONFIGS), selectMission);
 
@@ -46,8 +37,8 @@ export function selectMission(missionId: string) {
     (hostEvent) => {
       switch (hostEvent.type) {
         case 'start': {
-          hostEvent.sendMessage; // this should be an argument
-          startGame(null);
+          // Hosting: pass host info and sendMessage function into the game
+          startGame(true, targetPeerId, hostEvent.sendMessage);
           break;
         }
         case 'message': {
@@ -64,8 +55,8 @@ export function selectMission(missionId: string) {
     (clientEvent) => {
       switch (clientEvent.type) {
         case 'start': {
-          clientEvent.sendMessage; // this should be an argument
-          startGame(null);
+          // Joined as client: pass client send function into the game
+          startGame(false, targetPeerId, clientEvent.sendMessage);
           break;
         }
         case 'message': {
@@ -86,10 +77,22 @@ const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   scale: { mode: Phaser.Scale.RESIZE, parent: 'game-container', width: '100%', height: '100%' },
   physics: { default: 'arcade', arcade: { gravity: { x: 0, y: 0 }, debug: false } },
-  scene: MainScene,
+  scene: undefined,
 };
 
-function startGame(conn: DataConnection | null) {
+function startGame(hostFlag: boolean, code: string | null, sendMessage?: (msg: any) => void) {
   hideLobbyOverlay();
-  new Phaser.Game(config);
+
+  const sceneInstance = new MainScene({
+    isHost: hostFlag,
+    roomCode: code,
+    sendPeerMessage: sendMessage,
+  });
+
+  const runtimeConfig: Phaser.Types.Core.GameConfig = {
+    ...config,
+    scene: sceneInstance,
+  };
+
+  new Phaser.Game(runtimeConfig);
 }
