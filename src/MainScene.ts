@@ -38,7 +38,6 @@ export class MainScene extends Phaser.Scene {
   private walls!: Phaser.Physics.Arcade.StaticGroup;
 
   private enemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
-  private bulletSprites: Record<string, Phaser.GameObjects.Sprite> = {};
   private nextEnemyId = 0;
   private nextBulletId = 0;
 
@@ -343,25 +342,6 @@ export class MainScene extends Phaser.Scene {
     );
   }
 
-  private getSpawnPointOutsideBase() {
-    const cam = this.cameras.main;
-    const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
-    const dist = Math.max(cam.width, cam.height) / 2 + 220;
-
-    for (let i = 0; i < 20; i++) {
-      const x = Phaser.Math.Clamp(this.player!.x + Math.cos(angle) * dist, 40, 1960);
-      const y = Phaser.Math.Clamp(this.player!.y + Math.sin(angle) * dist, 40, 1960);
-      if (!this.isInBaseArea(x, y)) {
-        return { x, y };
-      }
-    }
-
-    return {
-      x: this.baseCenter.x + this.baseRadius + 80,
-      y: this.baseCenter.y - this.baseRadius - 80,
-    };
-  }
-
   private configureHeavyBossSprite(sprite: Phaser.GameObjects.Sprite) {
     const body = sprite.body as Phaser.Physics.Arcade.Body;
     if (!body) return;
@@ -604,18 +584,15 @@ export class MainScene extends Phaser.Scene {
     if (synth) synth.playExplosion();
   }
 
-  getBulletBySyncId(syncId: string): Phaser.Physics.Arcade.Sprite | null {
-    const bullet = this.bullets
-      .getChildren()
-      .find((b) => b.getData('syncId') === syncId) as Phaser.Physics.Arcade.Sprite;
-    return bullet && bullet.active ? bullet : null;
+  getEntityBySyncId(syncId: string): Phaser.Physics.Arcade.Sprite | null {
+    return this.entityLookup[syncId] as Phaser.Physics.Arcade.Sprite;
   }
 
   private handleEvent(event: GameEvent) {
     switch (event.type) {
       case 'bullet-destroyed': {
         // destroy the bullet and show an impact effect
-        const bulletSprite = this.getBulletBySyncId(event.bulletId);
+        const bulletSprite = this.getEntityBySyncId(event.bulletId);
         if (bulletSprite) {
           this.emitter.explode(4, bulletSprite.x, bulletSprite.y);
           bulletSprite.destroy();
