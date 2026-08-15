@@ -10,7 +10,7 @@ interface StartEvent<MessageFormat> {
 interface MessageEvent<MessageFormat> {
   type: 'message';
   id: string;
-  message: MessageFormat;
+  message: MessageFormat[];
 }
 
 interface DisconnectedEvent {
@@ -72,7 +72,7 @@ export function createOrJoinPeerId<HostMessageFormat, ClientMessageFormat>(
         id: conn.peer,
       });
     });
-    conn.on('data', (data: ClientMessageFormat) => {
+    conn.on('data', (data: ClientMessageFormat[]) => {
       hostCallback({
         type: 'message',
         id: conn.peer,
@@ -148,7 +148,7 @@ function joinPeerId<HostMessageFormat, ClientMessageFormat>(
       });
     });
 
-    conn.on('data', (data: HostMessageFormat) => {
+    conn.on('data', (data: HostMessageFormat[]) => {
       console.log(`Received data from ${peerId}:`, data);
       callback({
         type: 'message',

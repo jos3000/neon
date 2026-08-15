@@ -1025,32 +1025,36 @@ export class MainScene extends Phaser.Scene {
   }
 
   // Called on clients when a host-originating message arrives
-  receiveMessageFromHost(message: HostPeerMessage) {
-    if (!message || (message as any).type === undefined) return;
-    switch (message.type) {
-      case 'state':
-        this.receiveState(message);
-        break;
-      case 'positions':
-        this.receivePositions(message.snapshot);
-        break;
-      case 'effect':
-        this.receiveEffect(message);
-        break;
-      case 'events':
-        this.receiveEvents(message.events);
-        break;
-      default:
-        // unknown host message
-        break;
+  receiveMessageFromHost(messages: HostPeerMessage[]) {
+    if (!messages) return;
+    for (const message of messages) {
+      switch (message.type) {
+        case 'state':
+          this.receiveState(message);
+          break;
+        case 'positions':
+          this.receivePositions(message.snapshot);
+          break;
+        case 'effect':
+          this.receiveEffect(message);
+          break;
+        case 'events':
+          this.receiveEvents(message.events);
+          break;
+        default:
+          // unknown host message
+          break;
+      }
     }
   }
 
   // Called on host when a client-originating message arrives. `peerId` is the client's id.
-  receiveMessageFromClient(peerId: string, message: ClientPeerMessage) {
-    if (!message || (message as any).type === undefined) return;
-    if (message.type === 'input') {
-      this.handleRemoteInput(peerId, message);
+  receiveMessageFromClient(peerId: string, messages: ClientPeerMessage[]) {
+    if (!messages) return;
+    for (const message of messages) {
+      if (message.type === 'input') {
+        this.handleRemoteInput(peerId, message);
+      }
     }
   }
 
