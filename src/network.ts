@@ -41,11 +41,22 @@ export function createOrJoinPeerId<HostMessageFormat, ClientMessageFormat>(
 
   const connections: ClientConnections = [];
 
+  let hostBuffer = [];
+  let hostFlushInterval: number | undefined;
+
   function sendHostMessage(message: HostMessageFormat) {
-    for (const connection of connections) {
-      connection.send(message);
-    }
+    hostBuffer.push(message);
   }
+
+  function flushHostMessages() {
+    for (const connection of connections) {
+      connection.send(hostBuffer);
+    }
+    hostBuffer = [];
+  }
+
+  // periodically flush host messages to connected clients
+  hostFlushInterval = setInterval(flushHostMessages, 50);
 
   hostPeer.on('open', () => {
     console.log(`Hosting with peer ID: ${peerId}`);
@@ -95,6 +106,7 @@ export function createOrJoinPeerId<HostMessageFormat, ClientMessageFormat>(
     if (isUnavailableId) {
       if (hostPeer) {
         hostPeer.destroy();
+        if (hostFlushInterval !== undefined) clearInterval(hostFlushInterval);
       }
       console.log(`Mission ${peerId} is already live. Joining...`);
 
@@ -115,10 +127,18 @@ function joinPeerId<HostMessageFormat, ClientMessageFormat>(
   clientPeer.on('open', () => {
     console.log(`Connecting to ${peerId}...`);
     const conn = clientPeer.connect(peerId, { reliable: true });
+    let clientBuffer = [];
 
     function sendClientMessage(message: ClientMessageFormat) {
-      conn.send(message);
+      clientBuffer.push(message);
     }
+
+    function flushClientMessages() {
+      conn.send(clientBuffer);
+      clientBuffer = [];
+    }
+
+    setInterval(flushClientMessages, 50);
 
     conn.on('open', () => {
       console.log(`Connected to ${peerId}`);
