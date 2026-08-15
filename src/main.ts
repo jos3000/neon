@@ -45,6 +45,10 @@ export function selectMission(missionId: string) {
           gameScene && gameScene.receiveMessageFromClient(hostEvent.id, hostEvent.message);
           break;
         }
+        case 'connected': {
+          gameScene && gameScene.handleClientConnect(hostEvent.id);
+          break;
+        }
         case 'disconnected': {
           gameScene && gameScene.handleClientDisconnect(hostEvent.id);
           enableMissionButtons();

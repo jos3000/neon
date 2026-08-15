@@ -18,8 +18,16 @@ interface DisconnectedEvent {
   id: string;
 }
 
+interface ConnectedEvent {
+  type: 'connected';
+  id: string;
+}
+
 type HostEvent<HostMessageFormat, ClientMessageFormat> =
-  StartEvent<HostMessageFormat> | MessageEvent<ClientMessageFormat> | DisconnectedEvent;
+  | StartEvent<HostMessageFormat>
+  | MessageEvent<ClientMessageFormat>
+  | DisconnectedEvent
+  | ConnectedEvent;
 
 type ClientEvent<HostMessageFormat, ClientMessageFormat> =
   StartEvent<ClientMessageFormat> | MessageEvent<HostMessageFormat> | DisconnectedEvent;
@@ -48,6 +56,10 @@ export function createOrJoinPeerId<HostMessageFormat, ClientMessageFormat>(
     connections.push(conn);
     conn.on('open', () => {
       console.log('Client connected:', conn.peer);
+      hostCallback({
+        type: 'connected',
+        id: conn.peer,
+      });
     });
     conn.on('data', (data: ClientMessageFormat) => {
       hostCallback({

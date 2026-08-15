@@ -28,7 +28,6 @@ export class MainScene extends Phaser.Scene {
   private lastFired = 0;
   private fireRate = 120;
   private gameStarted = true;
-  private enemySpeed = 150;
   private broadcastTimer?: Phaser.Time.TimerEvent;
   private inputTimer?: Phaser.Time.TimerEvent;
 
@@ -204,7 +203,6 @@ export class MainScene extends Phaser.Scene {
     this.controls.initialize();
 
     if (this.isHost) {
-      this.enemySpeed = 150;
       this.initMapEnemies();
 
       this.physics.add.collider(this.bullets, this.enemies, this.hitEnemy, undefined, this);
@@ -812,13 +810,7 @@ export class MainScene extends Phaser.Scene {
   handleRemoteInput(peerId: string, data: PeerInputMessage) {
     if (!this.isHost || this.gameOver) return;
     if (!this.remotePlayers[peerId]) {
-      const rp = this.physics.add.sprite(this.baseCenter.x, this.baseCenter.y, 'guest');
-      rp.setDepth(2);
-      rp.setCollideWorldBounds(true);
-      this.remotePlayers[peerId] = rp;
-      this.applyPlayerColor(rp, peerId);
-      this.physics.add.collider(rp, this.enemies, this.hitPlayer, undefined, this);
-      this.physics.add.collider(rp, this.walls);
+      this.addRemotePlayer(peerId);
     }
     const rp = this.remotePlayers[peerId];
     rp.setData('moveX', data.moveX || 0);
@@ -826,6 +818,17 @@ export class MainScene extends Phaser.Scene {
     rp.setData('aimAngle', data.aimAngle || 0);
     rp.setData('shoot', data.shoot || false);
     rp.setData('lastFired', rp.getData('lastFired') || 0);
+  }
+
+  addRemotePlayer(peerId: string) {
+    const rp = this.physics.add.sprite(this.baseCenter.x, this.baseCenter.y, 'guest');
+    rp.setDepth(2);
+    rp.setCollideWorldBounds(true);
+    this.remotePlayers[peerId] = rp;
+    this.applyPlayerColor(rp, peerId);
+    this.physics.add.collider(rp, this.enemies, this.hitPlayer, undefined, this);
+    this.physics.add.collider(rp, this.walls);
+    this.remotePlayers[peerId] = rp;
   }
 
   removeRemotePlayer(peerId: string) {
@@ -1054,6 +1057,11 @@ export class MainScene extends Phaser.Scene {
   handleClientDisconnect(peerId: string) {
     // remove any remote player state and indicators
     this.removeRemotePlayer(peerId);
+  }
+
+  handleClientConnect(peerId: string) {
+    // TODO: trigger a state broadcast to add everything for the new player
+    this.addRemotePlayer(peerId);
   }
 
   handleHostDisconnect() {
