@@ -944,8 +944,7 @@ export class MainScene extends Phaser.Scene {
       let sprite = sprites[id];
 
       if (!sprite) {
-        const sprite = initSprite(entity);
-
+        sprite = initSprite(entity);
         sprites[id] = sprite;
       }
       sprite.setPosition(x, y);
@@ -1023,8 +1022,8 @@ export class MainScene extends Phaser.Scene {
   }
 
   handleClientConnect(peerId: string) {
-    // TODO: trigger a state broadcast to add everything for the new player
     this.addRemotePlayer(peerId);
+    this.broadcastState();
   }
 
   handleHostDisconnect() {
