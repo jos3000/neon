@@ -32,14 +32,14 @@ export class MainScene extends Phaser.Scene {
 
   private walls!: Phaser.Physics.Arcade.StaticGroup;
 
-  private player: Phaser.GameObjects.Sprite;
+  private player: Phaser.Physics.Arcade.Sprite;
 
   private bullets!: Phaser.Physics.Arcade.Group;
   private enemies!: Phaser.Physics.Arcade.Group;
   private players!: Phaser.Physics.Arcade.Group;
 
   private enemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
-  private playerSprites: Record<string, Phaser.GameObjects.Sprite> = {};
+  private playerSprites: Record<string, Phaser.Physics.Arcade.Sprite> = {};
   private bulletSprites: Record<string, Phaser.GameObjects.Sprite> = {};
 
   private nextEnemyId = 0;
@@ -770,10 +770,10 @@ export class MainScene extends Phaser.Scene {
 
   handleRemoteInput(peerId: string, data: PeerInputMessage) {
     if (!this.isHost || this.gameOver) return;
-    if (!this.players[peerId]) {
+    if (!this.playerSprites[peerId]) {
       this.addRemotePlayer(peerId);
     }
-    const rp = this.players[peerId];
+    const rp = this.playerSprites[peerId];
     rp.setData('moveX', data.moveX || 0);
     rp.setData('moveY', data.moveY || 0);
     rp.setData('aimAngle', data.aimAngle || 0);
@@ -1097,8 +1097,9 @@ export class MainScene extends Phaser.Scene {
 
     if (this.isHost) {
       const speed = 350;
-      for (const id in this.players) {
-        const rp = this.players[id];
+      for (const id in this.playerSprites) {
+        const rp = this.playerSprites[id];
+        if (rp === this.player) continue;
         if (rp.getData('isDead')) {
           rp.setVelocity(0, 0);
           continue;
