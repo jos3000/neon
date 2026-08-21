@@ -1,33 +1,36 @@
 import { Snapshot } from '@geckos.io/snapshot-interpolation/lib/types';
 import { GameEvent } from '../events';
 
-type PlayerSnapshot = {
+export type PlayerSnapshot = {
+  id: string;
   x: number;
   y: number;
   r: number;
   isDead: boolean;
 };
+
 export type EnemySnapshot = {
   id: string;
   x: number;
   y: number;
-  type: string;
   r: number;
-  laserState?: 'idle' | 'charging' | 'firing';
-  laserAngle?: number;
+  type: string;
 };
+
 export type BulletSnapshot = {
   id: string;
   x: number;
   y: number;
+  r: number;
 };
-export type PeerSnapshotMessage = {
-  type: 'state';
-  score: number;
-  players: Record<string, PlayerSnapshot>;
+
+export type PeerEntityMessage = {
+  type: 'entities';
+  players: PlayerSnapshot[];
   enemies: EnemySnapshot[];
   bullets: BulletSnapshot[];
 };
+
 export type PeerInputMessage = {
   type: 'input';
   moveX: number;
@@ -35,6 +38,7 @@ export type PeerInputMessage = {
   shoot: boolean;
   aimAngle: number;
 };
+
 export type PeerEffectMessage = {
   type: 'effect';
   effect: 'explosion' | 'hit' | 'spawn' | 'big-spawn' | 'death' | 'shot' | 'laser';
@@ -53,6 +57,6 @@ export type PeerPositionMessage = {
 };
 
 export type HostPeerMessage =
-  PeerSnapshotMessage | PeerEffectMessage | PeerEventMessage | PeerPositionMessage;
+  PeerEntityMessage | PeerEffectMessage | PeerEventMessage | PeerPositionMessage;
 
 export type ClientPeerMessage = PeerInputMessage;

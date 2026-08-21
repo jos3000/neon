@@ -13,9 +13,10 @@ import {
   HostPeerMessage,
   ClientPeerMessage,
   EnemySnapshot,
-  PeerSnapshotMessage,
+  PeerEntityMessage,
   PeerPositionMessage,
-} from './types/Snapshot';
+  PlayerSnapshot,
+} from './types/PeerMessages';
 import { Synth } from './Synth';
 import { createTextures } from './graphics';
 
@@ -28,16 +29,19 @@ export class MainScene extends Phaser.Scene {
   private lastFired = 0;
   private fireRate = 120;
   private gameStarted = true;
-  private broadcastTimer?: Phaser.Time.TimerEvent;
-  private inputTimer?: Phaser.Time.TimerEvent;
 
-  private player: Phaser.Physics.Arcade.Sprite | null = null;
-  private remotePlayers: Record<string, Phaser.Physics.Arcade.Sprite> = {};
-  private bullets!: Phaser.Physics.Arcade.Group;
-  private enemies!: Phaser.Physics.Arcade.Group;
   private walls!: Phaser.Physics.Arcade.StaticGroup;
 
+  private player: Phaser.GameObjects.Sprite;
+
+  private bullets!: Phaser.Physics.Arcade.Group;
+  private enemies!: Phaser.Physics.Arcade.Group;
+  private players!: Phaser.Physics.Arcade.Group;
+
   private enemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
+  private playerSprites: Record<string, Phaser.GameObjects.Sprite> = {};
+  private bulletSprites: Record<string, Phaser.GameObjects.Sprite> = {};
+
   private nextEnemyId = 0;
   private nextBulletId = 0;
 
@@ -49,8 +53,8 @@ export class MainScene extends Phaser.Scene {
   private controls!: Controls;
 
   private localPeerId: string | null = null;
-  private hostPlayerSprite?: Phaser.GameObjects.Sprite;
-  private otherRemoteSprites: Record<string, Phaser.GameObjects.Sprite> = {};
+  // private hostPlayerSprite?: Phaser.GameObjects.Sprite;
+  // private otherRemoteSprites: Record<string, Phaser.GameObjects.Sprite> = {};
   private playerIndicators: Record<string, Phaser.GameObjects.Graphics> = {};
   private playerColors: Record<string, number> = {};
 
@@ -122,21 +126,31 @@ export class MainScene extends Phaser.Scene {
     this.fireRate = 120;
     this.gameStarted = true;
 
-    this.player = this.physics.add.sprite(
+    this.players = this.physics.add.group({ collideWorldBounds: true });
+
+    this.player = this.players.create(
       this.baseCenter.x,
       this.baseCenter.y,
       this.isHost ? 'player' : 'guest'
     );
+
+    this.playerSprites[this.localPeerId] = this.player;
+
     this.player.setDepth(2);
-    this.player.setCollideWorldBounds(true);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
     this.bullets = this.physics.add.group({ runChildUpdate: true });
-    this.enemies = this.physics.add.group();
+    this.enemies = this.physics.add.group({ collideWorldBounds: true });
 
     // Core Colliders
-    this.physics.add.collider(this.player, this.walls);
-    this.physics.add.collider(this.bullets, this.walls, this.hitWall, undefined, this);
+
+    if (this.isHost) {
+      this.physics.add.collider(this.players, this.walls);
+      this.physics.add.collider(this.bullets, this.walls, this.hitWall, undefined, this);
+      this.physics.add.collider(this.bullets, this.enemies, this.hitEnemy, undefined, this);
+      this.physics.add.collider(this.players, this.enemies, this.hitPlayer, undefined, this);
+      this.physics.add.collider(this.enemies, this.walls);
+    }
 
     this.emitter = this.add.particles(0, 0, 'particle', {
       speed: { min: 50, max: 200 },
@@ -201,29 +215,9 @@ export class MainScene extends Phaser.Scene {
     });
     this.controls.initialize();
 
-    if (this.isHost) {
-      this.initMapEnemies();
-
-      this.physics.add.collider(this.bullets, this.enemies, this.hitEnemy, undefined, this);
-      this.physics.add.collider(this.player, this.enemies, this.hitPlayer, undefined, this);
-      this.physics.add.collider(this.enemies, this.walls);
-
-      this.broadcastTimer = this.time.addEvent({
-        delay: 50,
-        callback: this.broadcastState,
-        callbackScope: this,
-        loop: true,
-      });
-    } else {
-      this.inputTimer = this.time.addEvent({
-        delay: 30,
-        callback: this.sendInput,
-        callbackScope: this,
-        loop: true,
-      });
-    }
-
     this.scale.on('resize', this.resize, this);
+
+    this.initMapEnemies();
   }
 
   private getPlayerColor(id: string): number {
@@ -255,19 +249,11 @@ export class MainScene extends Phaser.Scene {
     const viewBottom = camera.scrollY + camera.height;
     const trackedSprites: Array<{ id: string; sprite: Phaser.GameObjects.Sprite }> = [];
 
-    if (this.hostPlayerSprite) {
-      trackedSprites.push({ id: 'host', sprite: this.hostPlayerSprite });
-    }
-
-    Object.entries(this.otherRemoteSprites).forEach(([id, sprite]) => {
-      trackedSprites.push({ id, sprite });
+    Object.entries(this.playerSprites).forEach(([id, sprite]) => {
+      if (id !== this.localPeerId) {
+        trackedSprites.push({ id, sprite });
+      }
     });
-
-    if (this.isHost) {
-      Object.entries(this.remotePlayers).forEach(([id, sprite]) => {
-        trackedSprites.push({ id: `remote-${id}`, sprite });
-      });
-    }
 
     trackedSprites.forEach(({ id, sprite }) => {
       const indicatorId = `indicator-${id}`;
@@ -461,7 +447,7 @@ export class MainScene extends Phaser.Scene {
   private updateEnemyBehavior(
     enemy: Phaser.GameObjects.Sprite,
     time: number,
-    target: Phaser.Physics.Arcade.Sprite | null,
+    target: Phaser.GameObjects.Sprite | null,
     minDist: number
   ) {
     const definition = enemy.getData('definition') as EnemyConfig | undefined;
@@ -770,26 +756,24 @@ export class MainScene extends Phaser.Scene {
     this.handlePlayerDeath(player as Phaser.Physics.Arcade.Sprite);
   }
 
-  getAlivePlayers(): Phaser.Physics.Arcade.Sprite[] {
-    const alivePlayers: Phaser.Physics.Arcade.Sprite[] = [];
-    if (this.player && this.player.active && !this.player.getData('isDead')) {
-      alivePlayers.push(this.player);
-    }
-    for (const id in this.remotePlayers) {
-      const rp = this.remotePlayers[id];
-      if (rp && rp.active && !rp.getData('isDead')) {
-        alivePlayers.push(rp);
+  getAlivePlayers(): Phaser.GameObjects.Sprite[] {
+    const alivePlayers: Phaser.GameObjects.Sprite[] = [];
+
+    for (const [id, sprite] of Object.entries(this.playerSprites)) {
+      if (sprite.visible) {
+        alivePlayers.push(sprite);
       }
     }
+
     return alivePlayers;
   }
 
   handleRemoteInput(peerId: string, data: PeerInputMessage) {
     if (!this.isHost || this.gameOver) return;
-    if (!this.remotePlayers[peerId]) {
+    if (!this.players[peerId]) {
       this.addRemotePlayer(peerId);
     }
-    const rp = this.remotePlayers[peerId];
+    const rp = this.players[peerId];
     rp.setData('moveX', data.moveX || 0);
     rp.setData('moveY', data.moveY || 0);
     rp.setData('aimAngle', data.aimAngle || 0);
@@ -798,21 +782,18 @@ export class MainScene extends Phaser.Scene {
   }
 
   addRemotePlayer(peerId: string) {
-    const rp = this.physics.add.sprite(this.baseCenter.x, this.baseCenter.y, 'guest');
+    const rp = this.players.create(this.baseCenter.x, this.baseCenter.y, 'guest');
     rp.setDepth(2);
     rp.setCollideWorldBounds(true);
-    this.remotePlayers[peerId] = rp;
     this.applyPlayerColor(rp, peerId);
-    this.physics.add.collider(rp, this.enemies, this.hitPlayer, undefined, this);
-    this.physics.add.collider(rp, this.walls);
-    this.remotePlayers[peerId] = rp;
+    this.playerSprites[peerId] = rp;
   }
 
   removeRemotePlayer(peerId: string) {
-    if (this.remotePlayers[peerId]) {
-      this.remotePlayers[peerId].destroy();
-      delete this.remotePlayers[peerId];
-    }
+    const sprite = this.playerSprites[peerId];
+    this.players.remove(sprite, true, true);
+    delete this.playerSprites[peerId];
+
     const indicatorKey = `indicator-remote-${peerId}`;
     if (this.playerIndicators[indicatorKey]) {
       this.playerIndicators[indicatorKey].destroy();
@@ -820,74 +801,74 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  private syncEnemySprites(enemies: EnemySnapshot[]) {
-    const nextEnemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
+  // private syncEnemySprites(enemies: EnemySnapshot[]) {
+  //   const nextEnemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
 
-    function createEnemySprite(scene: MainScene, enemy: EnemySnapshot): Phaser.GameObjects.Sprite {
-      let textureKey = 'enemy';
-      const idParts = (enemy.id || '').split('::');
-      if (idParts.length === 2) {
-        const partKey = `${enemy.type}::${idParts[1]}`;
-        if (scene.textures.exists(partKey)) textureKey = partKey;
-        else if (scene.textures.exists(enemy.type)) textureKey = enemy.type;
-      } else {
-        textureKey = scene.textures.exists(enemy.type) ? enemy.type : 'enemy';
-      }
+  //   function createEnemySprite(scene: MainScene, enemy: EnemySnapshot): Phaser.GameObjects.Sprite {
+  //     let textureKey = 'enemy';
+  //     const idParts = (enemy.id || '').split('::');
+  //     if (idParts.length === 2) {
+  //       const partKey = `${enemy.type}::${idParts[1]}`;
+  //       if (scene.textures.exists(partKey)) textureKey = partKey;
+  //       else if (scene.textures.exists(enemy.type)) textureKey = enemy.type;
+  //     } else {
+  //       textureKey = scene.textures.exists(enemy.type) ? enemy.type : 'enemy';
+  //     }
 
-      const sprite = scene.enemies.create(enemy.x, enemy.y, textureKey);
-      sprite.setData('syncId', enemy.id);
+  //     const sprite = scene.enemies.create(enemy.x, enemy.y, textureKey);
+  //     sprite.setData('syncId', enemy.id);
 
-      // If this is a part (id contains ::), store part metadata
-      if (idParts.length === 2) {
-        sprite.setData('isPart', true);
-        sprite.setData('partId', idParts[1]);
-        sprite.setData('parentEnemy', idParts[0]);
-        sprite.setData('isCore', idParts[1] === 'core');
-      }
+  //     // If this is a part (id contains ::), store part metadata
+  //     if (idParts.length === 2) {
+  //       sprite.setData('isPart', true);
+  //       sprite.setData('partId', idParts[1]);
+  //       sprite.setData('parentEnemy', idParts[0]);
+  //       sprite.setData('isCore', idParts[1] === 'core');
+  //     }
 
-      return sprite;
-    }
+  //     return sprite;
+  //   }
 
-    function syncEnemySprite(sprite: Phaser.GameObjects.Sprite, enemy: EnemySnapshot) {
-      sprite.setPosition(enemy.x, enemy.y);
-      sprite.rotation = enemy.r;
-      sprite.setVisible(true);
-      sprite.setActive(true);
-      sprite.setData('type', enemy.type);
-      // lightweight hp on clients for visuals; authoritative HP stays on host
-      sprite.setData(
-        'hp',
-        enemy.type === 'spawner' ? 100 : enemy.type === 'big' ? 5 : enemy.type === 'laser' ? 3 : 1
-      );
-      sprite.setData('laserState', enemy.laserState || 'idle');
-      sprite.setData('laserAngle', enemy.laserAngle ?? enemy.r);
-    }
+  //   function syncEnemySprite(sprite: Phaser.GameObjects.Sprite, enemy: EnemySnapshot) {
+  //     sprite.setPosition(enemy.x, enemy.y);
+  //     sprite.rotation = enemy.r;
+  //     sprite.setVisible(true);
+  //     sprite.setActive(true);
+  //     sprite.setData('type', enemy.type);
+  //     // lightweight hp on clients for visuals; authoritative HP stays on host
+  //     sprite.setData(
+  //       'hp',
+  //       enemy.type === 'spawner' ? 100 : enemy.type === 'big' ? 5 : enemy.type === 'laser' ? 3 : 1
+  //     );
+  //     // sprite.setData('laserState', enemy.laserState || 'idle');
+  //     // sprite.setData('laserAngle', enemy.laserAngle ?? enemy.r);
+  //   }
 
-    enemies.forEach((enemy) => {
-      // Use the sync id to detect boss part sprites: format 'enemy-<n>::<partId>'
-      let sprite = this.enemySprites[enemy.id];
-      if (!sprite) {
-        sprite = createEnemySprite(this, enemy);
-      }
+  //   enemies.forEach((enemy) => {
+  //     // Use the sync id to detect boss part sprites: format 'enemy-<n>::<partId>'
+  //     let sprite = this.enemySprites[enemy.id];
+  //     if (!sprite) {
+  //       sprite = createEnemySprite(this, enemy);
+  //     }
 
-      syncEnemySprite(sprite, enemy);
+  //     syncEnemySprite(sprite, enemy);
 
-      nextEnemySprites[enemy.id] = sprite;
-    });
+  //     nextEnemySprites[enemy.id] = sprite;
+  //   });
 
-    Object.keys(this.enemySprites).forEach((id) => {
-      if (!nextEnemySprites[id]) {
-        const sprite = this.enemySprites[id];
-        if (sprite) {
-          this.showEnemyImpact(sprite);
-          sprite.destroy();
-        }
-        delete this.enemySprites[id];
-      }
-    });
+  //   Object.keys(this.enemySprites).forEach((id) => {
+  //     if (!nextEnemySprites[id]) {
+  //       const sprite = this.enemySprites[id];
+  //       if (sprite) {
+  //         this.showEnemyImpact(sprite);
+  //         sprite.destroy();
+  //       }
+  //       delete this.enemySprites[id];
+  //     }
+  //   });
 
-    this.enemySprites = nextEnemySprites;
-  }
+  //   this.enemySprites = nextEnemySprites;
+  // }
 
   broadcastState() {
     if (!this.isHost || !this.sendPeerMessage) return;
@@ -898,21 +879,26 @@ export class MainScene extends Phaser.Scene {
       r: this.player!.rotation,
       isDead: !!this.player!.getData('isDead'),
     };
-    for (const id in this.remotePlayers) {
-      const rp = this.remotePlayers[id];
+    for (const id in this.playerSprites) {
+      const rp = this.playerSprites[id];
       players[id] = { x: rp.x, y: rp.y, r: rp.rotation, isDead: !!rp.getData('isDead') };
     }
 
-    const state: PeerSnapshotMessage = {
-      type: 'state',
-      score: this.score,
-      players,
+    const state: PeerEntityMessage = {
+      type: 'entities',
+      players: this.players.getChildren().map((e: Phaser.GameObjects.Sprite) => ({
+        id: (e.getData('syncId') as string) || '',
+        x: e.x,
+        y: e.y,
+        r: e.rotation,
+        isDead: e.getData('isDead') as boolean,
+      })),
       enemies: this.enemies.getChildren().map((e: Phaser.GameObjects.Sprite) => ({
         id: (e.getData('syncId') as string) || '',
         x: e.x,
         y: e.y,
-        type: e.getData('type') as string,
         r: e.rotation,
+        type: e.getData('type') as string,
         laserState: e.getData('laserState'),
         laserAngle: e.getData('laserAngle'),
       })),
@@ -920,6 +906,7 @@ export class MainScene extends Phaser.Scene {
         id: (b.getData('syncId') as string) || '',
         x: b.x,
         y: b.y,
+        r: b.rotation,
       })),
     };
 
@@ -944,61 +931,56 @@ export class MainScene extends Phaser.Scene {
     });
   }
 
-  receiveState(data: PeerSnapshotMessage) {
-    if (this.isHost || !data || data.type !== 'state') return;
-    this.score = data.score;
-    this.scoreText.setText('SCORE: ' + data.score + ' | ROLE: CLIENT');
+  syncSprites<T extends { id: string; x: number; y: number; r: number }>(
+    entities: T[],
+    sprites: Record<string, Phaser.GameObjects.Sprite>,
+    initSprite: (entity: T) => Phaser.GameObjects.Sprite
+  ) {
+    const existing = new Set<string>();
 
-    this.syncEnemySprites(data.enemies || []);
+    for (const entity of entities) {
+      const { id, x, y, r, ...rest } = entity;
 
-    if (data.players) {
-      for (const id in data.players) {
-        const playerState = data.players[id];
-        const isDead = !!(playerState && playerState.isDead);
+      let sprite = sprites[id];
 
-        if (id === 'host') {
-          if (!this.hostPlayerSprite) {
-            this.hostPlayerSprite = this.add.sprite(playerState.x, playerState.y, 'player');
-            this.hostPlayerSprite.setDepth(2);
-            this.applyPlayerColor(this.hostPlayerSprite, 'host');
-          }
-          this.hostPlayerSprite.setPosition(playerState.x, playerState.y);
-          this.hostPlayerSprite.rotation = playerState.r;
-          this.hostPlayerSprite.setVisible(!isDead);
-        } else if (id === this.localPeerId) {
-          if (this.player) {
-            this.player.setData('isDead', isDead);
-            this.player.setVisible(!isDead);
-            if (!isDead) {
-              this.player.setPosition(playerState.x, playerState.y);
-              this.player.rotation = playerState.r;
-            }
-          }
-        } else if (id !== 'host' && id !== this.localPeerId) {
-          if (!this.otherRemoteSprites[id]) {
-            const spr = this.add.sprite(playerState.x, playerState.y, 'guest');
-            spr.setDepth(2);
-            this.applyPlayerColor(spr, id);
-            this.otherRemoteSprites[id] = spr;
-          }
-          this.otherRemoteSprites[id].setPosition(playerState.x, playerState.y);
-          this.otherRemoteSprites[id].rotation = playerState.r;
-          this.otherRemoteSprites[id].setVisible(!isDead);
-        }
+      if (!sprite) {
+        const sprite = initSprite(entity);
+
+        sprites[id] = sprite;
       }
-
-      for (const id in this.otherRemoteSprites) {
-        if (!data.players[id]) {
-          this.otherRemoteSprites[id].destroy();
-          delete this.otherRemoteSprites[id];
-          const indicatorKey = `indicator-${id}`;
-          if (this.playerIndicators[indicatorKey]) {
-            this.playerIndicators[indicatorKey].destroy();
-            delete this.playerIndicators[indicatorKey];
-          }
-        }
+      sprite.setPosition(x, y);
+      sprite.rotation = r;
+      if ('visible' in rest && typeof rest.visible === 'boolean') {
+        sprite.setVisible(rest.visible);
       }
+      existing.add(id);
     }
+
+    const forDeletion = Object.keys(sprites).filter((id) => !existing.has(id));
+
+    for (const id in forDeletion) {
+      sprites[id].destroy();
+      delete sprites[id];
+    }
+  }
+
+  receiveEntitySnapshot(data: PeerEntityMessage) {
+    this.syncSprites(data.enemies, this.enemySprites, (enemy) => {
+      const sprite = this.enemies.create(enemy.x, enemy.y, enemy.type);
+      return sprite;
+    });
+
+    this.syncSprites(data.players, this.playerSprites, (player) => {
+      const sprite = this.players.create(player.x, player.y, 'guest');
+      sprite.setDepth(2);
+      this.applyPlayerColor(sprite, player.id);
+      return sprite;
+    });
+
+    this.syncSprites(data.bullets, this.bulletSprites, (bullet) => {
+      const sprite = this.bullets.create(bullet.x, bullet.y, 'bullet');
+      return sprite;
+    });
   }
 
   // Called on clients when a host-originating message arrives
@@ -1006,8 +988,8 @@ export class MainScene extends Phaser.Scene {
     if (!messages) return;
     for (const message of messages) {
       switch (message.type) {
-        case 'state':
-          this.receiveState(message);
+        case 'entities':
+          this.receiveEntitySnapshot(message);
           break;
         case 'positions':
           this.receivePositions(message.snapshot);
@@ -1115,8 +1097,8 @@ export class MainScene extends Phaser.Scene {
 
     if (this.isHost) {
       const speed = 350;
-      for (const id in this.remotePlayers) {
-        const rp = this.remotePlayers[id];
+      for (const id in this.players) {
+        const rp = this.players[id];
         if (rp.getData('isDead')) {
           rp.setVelocity(0, 0);
           continue;
@@ -1148,7 +1130,8 @@ export class MainScene extends Phaser.Scene {
       }
 
       const alivePlayers = this.getAlivePlayers();
-      this.enemies.getChildren().forEach((enemy: Phaser.Physics.Arcade.Sprite) => {
+
+      const updateEnemy = (enemy: Phaser.Physics.Arcade.Sprite) => {
         if (!enemy.active) return;
         if (enemy.getData('type') === 'spawner') {
           enemy.setVelocity(0, 0);
@@ -1158,7 +1141,7 @@ export class MainScene extends Phaser.Scene {
         const definition = enemy.getData('definition') as EnemyConfig | undefined;
         if (!definition) return;
 
-        let target: Phaser.Physics.Arcade.Sprite | null = null;
+        let target: Phaser.GameObjects.Sprite | null = null;
         let minDist = Infinity;
         alivePlayers.forEach((player) => {
           if (!player || !player.active) return;
@@ -1249,7 +1232,9 @@ export class MainScene extends Phaser.Scene {
             });
           }
         }
-      });
+      };
+
+      this.enemies.getChildren().forEach(updateEnemy);
 
       const snapshot = this.SI.snapshot.create(
         Object.entries(this.entityLookup).map(([id, p]) => ({
@@ -1278,6 +1263,8 @@ export class MainScene extends Phaser.Scene {
           }
         }
       }
+
+      this.sendInput();
     }
 
     this.drawConnections();

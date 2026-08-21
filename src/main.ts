@@ -10,7 +10,7 @@ import {
   hideLobbyOverlay,
   setStatusText,
 } from './ui';
-import { ClientPeerMessage, HostPeerMessage } from './types/Snapshot';
+import { ClientPeerMessage, HostPeerMessage } from './types/PeerMessages';
 import { MainScene } from './MainScene';
 import { createOrJoinPeerId } from './network';
 
