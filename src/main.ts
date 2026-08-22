@@ -11,7 +11,7 @@ import {
   setStatusText,
 } from './ui';
 import { ClientPeerMessage, HostPeerMessage } from './types/PeerMessages';
-import { MainScene } from './MainScene';
+import { MainScene, SendPeerMessage } from './MainScene';
 import { createOrJoinPeerId } from './network';
 import * as sceneBridge from './sceneBridge';
 
@@ -28,8 +28,9 @@ function selectMission(missionId: string) {
   createOrJoinPeerId<HostPeerMessage, ClientPeerMessage>(
     targetPeerId,
     (hostEvent) => {
-      console.log('message from client', hostEvent.type, targetPeerId, hostEvent);
-
+      // Deliberately not logged: this fires for every batch of client input,
+      // dozens of times a second, and logging the payload keeps a reference to
+      // every message alive — with devtools open it was costing real frame time.
       switch (hostEvent.type) {
         case 'start': {
           // Hosting: pass host info and sendMessage function into the game
@@ -54,7 +55,7 @@ function selectMission(missionId: string) {
       }
     },
     (clientEvent) => {
-      console.log('message from host', clientEvent.type, targetPeerId, clientEvent);
+      // See above — the host's snapshot stream arrives here at the send rate.
       switch (clientEvent.type) {
         case 'start': {
           // Joined as client: pass client send function into the game
@@ -95,7 +96,7 @@ function startGame(
   hostFlag: boolean,
   code: string | null,
   missionConfig: MissionConfig,
-  sendMessage?: (msg: any) => void,
+  sendMessage?: SendPeerMessage,
   localPeerId?: string
 ) {
   hideLobbyOverlay();

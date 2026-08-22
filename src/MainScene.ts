@@ -20,13 +20,16 @@ import {
 } from './types/PeerMessages';
 import { Synth } from './Synth';
 import { createTextures } from './graphics';
+import { NET_SEND_INTERVAL_MS } from './network';
 
 const synth: Synth | null = new Synth();
+
+export type SendPeerMessage = (msg: any, options?: { droppable?: boolean }) => void;
 
 export type MainSceneInitData = {
   isHost: boolean;
   roomCode: string | null;
-  sendPeerMessage: ((msg: any) => void) | null;
+  sendPeerMessage: SendPeerMessage | null;
   localPeerId: string | null;
   missionConfig: MissionConfig;
   mapIndex?: number;
@@ -73,11 +76,35 @@ export class MainScene extends Phaser.Scene {
   private eventQueue: GameEvent[] = [];
   private entityLookup: Record<string, Phaser.GameObjects.Sprite> = {};
 
+  // How far in the past clients render host-driven entities. It has to cover one
+  // send interval plus network jitter, or calcInterpolation runs out of future
+  // snapshot to interpolate towards and entities visibly stall; every millisecond
+  // beyond that is pure added lag, so it's kept to two intervals plus a small
+  // jitter margin rather than the library's fixed 100ms default.
+  private static readonly INTERPOLATION_BUFFER_MS = NET_SEND_INTERVAL_MS * 2 + 20;
+
   private SI = new SnapshotInterpolation();
+
+  // Wall-clock time of the last position snapshot, so snapshots are produced at
+  // the network send rate instead of the render rate. At 60fps the old code built
+  // and queued three snapshots per flush; the first two were dead on arrival —
+  // superseded by the third in the same batch — but still cost their full size on
+  // the wire, and their spread-out timestamps made the client's server-time
+  // estimate jump around, which showed up as stutter.
+  private lastSnapshotAt = 0;
+
+  // Host only: whether anyone is actually listening. With no clients there is
+  // nothing to snapshot for.
+  private connectedClients = 0;
+
+  // Client only: the last input actually queued, so an unchanged input isn't
+  // resent every frame (the host keeps only the latest one anyway).
+  private lastSentInput: ClientPeerMessage | null = null;
+  private lastInputSentAt = 0;
 
   private isHost = false;
   private roomCode: string | null = null;
-  private sendPeerMessage: ((msg: any) => void) | null = null;
+  private sendPeerMessage: SendPeerMessage | null = null;
   private missionConfig!: MissionConfig;
   private mapIndex = 0;
 
@@ -131,6 +158,26 @@ export class MainScene extends Phaser.Scene {
     this.lastFired = 0;
     this.fireRate = 120;
     this.gameStarted = true;
+
+    // A map change restarts this scene, which destroys every sprite but does NOT
+    // re-run field initializers — the scene instance is reused. Anything holding
+    // sprite references has to be dropped here or it accumulates a full map's
+    // worth of dead entities on every map, for the rest of the mission. The
+    // lookups are reassigned rather than emptied because the managers below take
+    // a reference to whatever object exists at construction time.
+    this.entityLookup = {};
+    this.bulletSprites = {};
+    this.enemySprites = {};
+    this.eventQueue = [];
+
+    this.lastSnapshotAt = 0;
+    this.lastSentInput = null;
+    this.lastInputSentAt = 0;
+    // Snapshots from the previous map describe entities that no longer exist, and
+    // the local player's id is stable across maps — left in the vault they'd
+    // briefly interpolate the player back towards where they stood last map.
+    this.SI.vault.clear();
+    this.SI.interpolationBuffer.set(MainScene.INTERPOLATION_BUFFER_MS);
 
     this.bulletManager = new BulletManager({
       scene: this,
@@ -468,6 +515,10 @@ export class MainScene extends Phaser.Scene {
         x: b.x,
         y: b.y,
         r: b.rotation,
+        // Launch parameters, not just position: a late joiner dead-reckons this
+        // bullet from here on rather than being told where it is (see adoptBullet).
+        angle: (b.getData('angle') as number) || 0,
+        speed: (b.getData('speed') as number) || 0,
         ownerType: (b.getData('ownerType') as 'player' | 'enemy') || 'enemy',
       })),
     };
@@ -476,7 +527,14 @@ export class MainScene extends Phaser.Scene {
     this.sendPeerMessage(state);
   }
 
-  sendInput() {
+  // The host only ever keeps the most recent input it has received, so queueing
+  // one per rendered frame put two or three redundant copies into every flush.
+  // One per send interval is enough — with one exception: the discrete inputs
+  // (start/stop moving, start/stop shooting) go out the moment they change, so
+  // pressing and releasing keeps exactly the latency it had. Aim angle is
+  // continuous and changes on almost every frame just from walking, so it rides
+  // along with the next interval rather than forcing a send of its own.
+  sendInput(time: number) {
     if (this.isHost) return;
     const send = this.sendPeerMessage;
     if (!send) return;
@@ -484,13 +542,26 @@ export class MainScene extends Phaser.Scene {
     const movement = this.controls.getMovementInput();
     const shootInput = this.controls.getShootInput(this.player);
 
-    send({
+    const input: ClientPeerMessage = {
       type: 'input',
       moveX: movement.x,
       moveY: movement.y,
       shoot: shootInput.shoot,
       aimAngle: shootInput.angle,
-    });
+    };
+
+    const previous = this.lastSentInput;
+    const discreteChange =
+      !previous ||
+      previous.moveX !== input.moveX ||
+      previous.moveY !== input.moveY ||
+      previous.shoot !== input.shoot;
+
+    if (!discreteChange && time - this.lastInputSentAt < NET_SEND_INTERVAL_MS) return;
+
+    this.lastSentInput = input;
+    this.lastInputSentAt = time;
+    send(input);
   }
 
   syncSprites<T extends { id: string; x: number; y: number; r: number }>(
@@ -560,9 +631,12 @@ export class MainScene extends Phaser.Scene {
         if (existing) return existing;
         const sprite = this.bulletManager.bullets.create(bullet.x, bullet.y, 'bullet');
         sprite.setData('syncId', bullet.id);
+        sprite.setData('angle', bullet.angle);
+        sprite.setData('speed', bullet.speed);
         sprite.setData('ownerType', bullet.ownerType);
         if (bullet.ownerType === 'enemy') sprite.setTint(0xff3333);
         this.entityLookup[bullet.id] = sprite;
+        this.bulletManager.adoptBullet(sprite, bullet.angle, bullet.speed);
         return sprite;
       },
       (id) => delete this.entityLookup[id]
@@ -636,11 +710,13 @@ export class MainScene extends Phaser.Scene {
 
   handleClientDisconnect(peerId: string) {
     // remove any remote player state and indicators, and tell other clients
+    this.connectedClients = Math.max(0, this.connectedClients - 1);
     this.playerManager.removeRemotePlayer(peerId);
     this.eventQueue.push({ type: 'player-left', peerId });
   }
 
   handleClientConnect(peerId: string) {
+    this.connectedClients += 1;
     this.playerManager.addRemotePlayer(peerId);
     this.broadcastState();
   }
@@ -761,16 +837,7 @@ export class MainScene extends Phaser.Scene {
       this.enemyManager.update(time, alivePlayers);
       this.mapManager.update(time);
 
-      const snapshot = this.SI.snapshot.create(
-        Object.entries(this.entityLookup).map(([id, p]) => ({
-          id,
-          x: p.x,
-          y: p.y,
-          r: p.rotation,
-        }))
-      );
-      this.SI.vault.add(snapshot);
-      this.broadcastPositions(snapshot);
+      this.broadcastPositions(time);
     } else {
       // calculate the interpolation for the parameters x and y and return the snapshot
       const snapshot = this.SI.calcInterpolation('x y r'); // [deep: string] as optional second parameter
@@ -793,7 +860,7 @@ export class MainScene extends Phaser.Scene {
         }
       }
 
-      this.sendInput();
+      this.sendInput(time);
     }
 
     this.enemyManager.draw();
@@ -808,10 +875,41 @@ export class MainScene extends Phaser.Scene {
     this.eventQueue = [];
   }
 
-  private broadcastPositions(snapshot: Snapshot) {
+  // Builds the position snapshot from the entities clients genuinely cannot
+  // predict: players (driven by another peer's input) and enemies (driven by host
+  // AI). Bullets are excluded on purpose — they're the most numerous entity by a
+  // wide margin and every peer already dead-reckons them exactly from their
+  // creation event, so putting them here was paying the bandwidth for something
+  // that only made them render further behind.
+  private collectPositionState() {
+    const state: { id: string; x: number; y: number; r: number }[] = [];
+
+    const push = (sprite: Phaser.GameObjects.Sprite) => {
+      const id = sprite.getData('syncId') as string;
+      if (!id) return;
+      state.push({ id, x: sprite.x, y: sprite.y, r: sprite.rotation });
+    };
+
+    this.playerManager.players.getChildren().forEach(push);
+    this.enemyManager.enemies.getChildren().forEach(push);
+
+    return state;
+  }
+
+  // Snapshots are produced at the network send rate, not the render rate: any
+  // extra ones just queue up behind each other in the same flush, where all but
+  // the last are already stale on arrival.
+  private broadcastPositions(time: number) {
     if (!this.isHost || !this.sendPeerMessage) return;
+    if (this.connectedClients === 0) return;
+    if (time - this.lastSnapshotAt < NET_SEND_INTERVAL_MS) return;
+    this.lastSnapshotAt = time;
+
+    const snapshot = this.SI.snapshot.create(this.collectPositionState());
     const message: PeerPositionMessage = { type: 'positions', snapshot };
-    this.sendPeerMessage(message);
+    // Droppable: if the channel is already backed up, a stale snapshot is worse
+    // than no snapshot — the next one supersedes it entirely.
+    this.sendPeerMessage(message, { droppable: true });
   }
 
   // The client predicts its own player locally from input rather than waiting on the

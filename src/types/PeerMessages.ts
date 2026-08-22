@@ -9,11 +9,16 @@ export type PlayerSnapshot = {
   isDead: boolean;
 };
 
+// Bullets are dead-reckoned by every peer from their launch parameters rather
+// than tracked in the position snapshot (see BulletManager.createBulletSprite),
+// so a late joiner needs `angle` and `speed` here to pick up an in-flight one.
 export type BulletSnapshot = {
   id: string;
   x: number;
   y: number;
   r: number;
+  angle: number;
+  speed: number;
   ownerType: 'player' | 'enemy';
 };
 
@@ -44,14 +49,7 @@ export type PeerInputMessage = {
 export type PeerEffectMessage = {
   type: 'effect';
   effect:
-    | 'explosion'
-    | 'hit'
-    | 'spawn'
-    | 'big-spawn'
-    | 'death'
-    | 'shot'
-    | 'laser'
-    | 'spawn-warning';
+    'explosion' | 'hit' | 'spawn' | 'big-spawn' | 'death' | 'shot' | 'laser' | 'spawn-warning';
   x?: number;
   y?: number;
 };
@@ -68,6 +66,8 @@ export type PeerMapCompleteMessage = {
   nextMapIndex: number | null;
 };
 
+// Positions of the entities the host simulates and clients cannot predict:
+// players and enemies. Bullets are deliberately absent — see BulletSnapshot.
 export type PeerPositionMessage = {
   type: 'positions';
   snapshot: Snapshot;

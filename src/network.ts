@@ -2,10 +2,38 @@ import Peer, { DataConnection } from 'peerjs';
 
 type ClientConnections = DataConnection[];
 
+// How often buffered messages are flushed onto the wire. Everything produced in
+// between is coalesced into a single send, so this is also the game's natural
+// send rate — MainScene matches its snapshot cadence to it (see the import of
+// this constant there) so a flush carries exactly one position snapshot instead
+// of a redundant backlog of them.
+export const NET_SEND_INTERVAL_MS = 33;
+
+// The data channel is reliable + ordered, so anything queued behind a congested
+// channel delays everything sent after it. peerjs only stops buffering at 8MB,
+// which is many seconds of backlog on a real link — long before that the game is
+// unplayable, and it never recovers because we keep producing at a fixed rate.
+// Once the channel is this far behind, drop messages marked `droppable`
+// (position snapshots — the next one supersedes them anyway) and keep only the
+// ones that carry state changes.
+const MAX_BUFFERED_BYTES = 64 * 1024;
+
+interface SendOptions {
+  /** Safe to skip if the channel is congested; the next one replaces it. */
+  droppable?: boolean;
+}
+
+type SendMessage<MessageFormat> = (msg: MessageFormat, options?: SendOptions) => void;
+
+interface BufferedMessage<MessageFormat> {
+  message: MessageFormat;
+  droppable: boolean;
+}
+
 interface StartEvent<MessageFormat> {
   type: 'start';
   id: string;
-  sendMessage: (msg: MessageFormat) => void;
+  sendMessage: SendMessage<MessageFormat>;
 }
 
 interface MessageEvent<MessageFormat> {
@@ -33,6 +61,33 @@ type HostEvent<HostMessageFormat, ClientMessageFormat> =
 type ClientEvent<HostMessageFormat, ClientMessageFormat> =
   StartEvent<ClientMessageFormat> | MessageEvent<HostMessageFormat> | DisconnectedEvent;
 
+// `dataChannel` isn't part of peerjs's public typings, but it is the live
+// RTCDataChannel and its bufferedAmount is our only visibility into how far
+// behind the link is. Treat an unavailable channel as "not congested".
+function bufferedAmount(connection: DataConnection): number {
+  return (
+    (connection as unknown as { dataChannel?: RTCDataChannel }).dataChannel?.bufferedAmount ?? 0
+  );
+}
+
+// Sends one batch to one connection, shedding droppable messages when that
+// particular connection is congested — congestion is per-peer, so a single slow
+// client must not degrade what everyone else receives.
+function sendBatch<MessageFormat>(
+  connection: DataConnection,
+  buffer: BufferedMessage<MessageFormat>[]
+) {
+  if (!connection.open) return;
+
+  const congested = bufferedAmount(connection) > MAX_BUFFERED_BYTES;
+  const payload = congested
+    ? buffer.filter((entry) => !entry.droppable).map((entry) => entry.message)
+    : buffer.map((entry) => entry.message);
+
+  if (payload.length === 0) return;
+  connection.send(payload);
+}
+
 export function createOrJoinPeerId<HostMessageFormat, ClientMessageFormat>(
   peerId: string,
   hostCallback: (event: HostEvent<HostMessageFormat, ClientMessageFormat>) => void,
@@ -42,11 +97,11 @@ export function createOrJoinPeerId<HostMessageFormat, ClientMessageFormat>(
 
   const connections: ClientConnections = [];
 
-  let hostBuffer = [];
+  let hostBuffer: BufferedMessage<HostMessageFormat>[] = [];
   let hostFlushInterval: number | undefined;
 
-  function sendHostMessage(message: HostMessageFormat) {
-    hostBuffer.push(message);
+  function sendHostMessage(message: HostMessageFormat, options?: SendOptions) {
+    hostBuffer.push({ message, droppable: options?.droppable === true });
   }
 
   function flushHostMessages() {
@@ -56,13 +111,13 @@ export function createOrJoinPeerId<HostMessageFormat, ClientMessageFormat>(
     // Connections are only added to `connections` once their data channel is
     // open (see conn.on('open', ...) below), so it's always safe to send here.
     for (const connection of connections) {
-      connection.send(hostBuffer);
+      sendBatch(connection, hostBuffer);
     }
     hostBuffer = [];
   }
 
   // periodically flush host messages to connected clients
-  hostFlushInterval = setInterval(flushHostMessages, 50);
+  hostFlushInterval = setInterval(flushHostMessages, NET_SEND_INTERVAL_MS);
 
   hostPeer.on('open', () => {
     console.log(`Hosting with peer ID: ${peerId}`);
@@ -133,14 +188,16 @@ function joinPeerId<HostMessageFormat, ClientMessageFormat>(
   clientPeer.on('open', () => {
     console.log(`Connecting to ${peerId}...`);
     const conn = clientPeer.connect(peerId, { reliable: true });
-    let clientBuffer = [];
+    let clientBuffer: BufferedMessage<ClientMessageFormat>[] = [];
+    let clientFlushInterval: number | undefined;
 
-    function sendClientMessage(message: ClientMessageFormat) {
-      clientBuffer.push(message);
+    function sendClientMessage(message: ClientMessageFormat, options?: SendOptions) {
+      clientBuffer.push({ message, droppable: options?.droppable === true });
     }
 
     function flushClientMessages() {
-      conn.send(clientBuffer);
+      if (clientBuffer.length === 0) return;
+      sendBatch(conn, clientBuffer);
       clientBuffer = [];
     }
 
@@ -148,7 +205,7 @@ function joinPeerId<HostMessageFormat, ClientMessageFormat>(
       console.log(`Connected to ${peerId}`);
       // Only start flushing once the data channel is actually open — sending
       // any earlier throws "Connection is not open".
-      setInterval(flushClientMessages, 50);
+      clientFlushInterval = setInterval(flushClientMessages, NET_SEND_INTERVAL_MS);
       callback({
         type: 'start',
         sendMessage: sendClientMessage,
@@ -157,7 +214,6 @@ function joinPeerId<HostMessageFormat, ClientMessageFormat>(
     });
 
     conn.on('data', (data: HostMessageFormat[]) => {
-      console.log(`Received data from ${peerId}:`, data);
       callback({
         type: 'message',
         id: peerId,
@@ -167,6 +223,8 @@ function joinPeerId<HostMessageFormat, ClientMessageFormat>(
 
     conn.on('close', () => {
       console.log(`Connection to ${peerId} was lost.`);
+      if (clientFlushInterval !== undefined) clearInterval(clientFlushInterval);
+      clientBuffer = [];
       callback({
         type: 'disconnected',
         id: peerId,
