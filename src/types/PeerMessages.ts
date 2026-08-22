@@ -60,12 +60,23 @@ type PeerEventMessage = {
   events: GameEvent[];
 };
 
+// Host-authoritative announcement that the current map's enemies are all cleared.
+// `nextMapIndex` is null when the just-completed map was the mission's last one.
+export type PeerMapCompleteMessage = {
+  type: 'map-complete';
+  nextMapIndex: number | null;
+};
+
 export type PeerPositionMessage = {
   type: 'positions';
   snapshot: Snapshot;
 };
 
 export type HostPeerMessage =
-  PeerEntityMessage | PeerEffectMessage | PeerEventMessage | PeerPositionMessage;
+  | PeerEntityMessage
+  | PeerEffectMessage
+  | PeerEventMessage
+  | PeerPositionMessage
+  | PeerMapCompleteMessage;
 
 export type ClientPeerMessage = PeerInputMessage;

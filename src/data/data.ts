@@ -22,11 +22,14 @@ export type WallConfig = { x: number; y: number; w: number; h: number };
 export type MissionConfig = {
   id: string;
   name: string;
+  mapIds: string[];
+};
+
+export type MapRuntimeConfig = {
   baseCenter: { x: number; y: number };
   baseRadius: number;
   spawnSchedule: SpawnTrigger[];
   walls: WallConfig[];
-  mapIds: string[];
 };
 
 export const mapLookup: Record<string, GameMap> = {
@@ -56,15 +59,22 @@ export const enemyDefinitions: EnemyConfig[] = [
 ];
 
 export function buildMissionConfig(mission: GameMission): MissionConfig {
-  const primaryMap = mapLookup[mission.maps[0]] ?? echoGrid;
   return {
     id: mission.id,
     name: mission.name,
-    baseCenter: primaryMap.base ?? { x: primaryMap.width / 2, y: primaryMap.height / 2 },
-    baseRadius: Math.max(120, Math.min(primaryMap.width, primaryMap.height) * 0.2),
-    spawnSchedule: primaryMap.spawnSchedule,
-    walls: primaryMap.walls.map((wall) => ({ ...wall })),
     mapIds: mission.maps,
+  };
+}
+
+// Per-map runtime fields (base, walls, spawn schedule), looked up fresh whenever
+// MainScene starts or advances to a given map within a mission.
+export function buildMapConfig(mapId: string): MapRuntimeConfig {
+  const map = mapLookup[mapId] ?? echoGrid;
+  return {
+    baseCenter: map.base ?? { x: map.width / 2, y: map.height / 2 },
+    baseRadius: Math.max(120, Math.min(map.width, map.height) * 0.2),
+    spawnSchedule: map.spawnSchedule,
+    walls: map.walls.map((wall) => ({ ...wall })),
   };
 }
 

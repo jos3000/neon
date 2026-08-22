@@ -3,17 +3,19 @@ import { Snapshot } from '@geckos.io/snapshot-interpolation/lib/types';
 import Phaser from 'phaser';
 import { BulletManager } from './BulletManager';
 import { Controls } from './controls';
-import { enemyDefinitionLookup, MissionConfig } from './data/data';
+import { buildMapConfig, enemyDefinitionLookup, MissionConfig } from './data/data';
 import { EnemyManager } from './EnemyManager';
 import { GameEvent } from './events';
 import { MapManager, SPAWN_TELEGRAPH_MS } from './MapManager';
 import { PlayerManager } from './PlayerManager';
+import * as sceneBridge from './sceneBridge';
 import { TrackerManager } from './TrackerManager';
 import {
   PeerEffectMessage,
   HostPeerMessage,
   ClientPeerMessage,
   PeerEntityMessage,
+  PeerMapCompleteMessage,
   PeerPositionMessage,
 } from './types/PeerMessages';
 import { Synth } from './Synth';
@@ -27,6 +29,7 @@ export type MainSceneInitData = {
   sendPeerMessage: ((msg: any) => void) | null;
   localPeerId: string | null;
   missionConfig: MissionConfig;
+  mapIndex?: number;
 };
 
 export class MainScene extends Phaser.Scene {
@@ -54,6 +57,7 @@ export class MainScene extends Phaser.Scene {
   private scoreText!: Phaser.GameObjects.Text;
   private pauseText!: Phaser.GameObjects.Text;
   private gameOverText!: Phaser.GameObjects.Text;
+  private mapCompleteText!: Phaser.GameObjects.Text;
 
   private controls!: Controls;
 
@@ -75,6 +79,7 @@ export class MainScene extends Phaser.Scene {
   private roomCode: string | null = null;
   private sendPeerMessage: ((msg: any) => void) | null = null;
   private missionConfig!: MissionConfig;
+  private mapIndex = 0;
 
   constructor() {
     super({ key: 'MainScene' });
@@ -87,6 +92,7 @@ export class MainScene extends Phaser.Scene {
     this.sendPeerMessage = data.sendPeerMessage;
     this.localPeerId = data.localPeerId;
     this.missionConfig = data.missionConfig;
+    this.mapIndex = data.mapIndex ?? 0;
   }
 
   preload() {
@@ -95,9 +101,11 @@ export class MainScene extends Phaser.Scene {
 
   create() {
     const missionConf = this.missionConfig;
+    const mapId = missionConf.mapIds[this.mapIndex] ?? missionConf.mapIds[0];
+    const mapConf = buildMapConfig(mapId);
 
-    this.baseCenter = missionConf.baseCenter;
-    this.baseRadius = missionConf.baseRadius;
+    this.baseCenter = mapConf.baseCenter;
+    this.baseRadius = mapConf.baseRadius;
 
     this.physics.world.setBounds(0, 0, 2000, 2000);
     this.cameras.main.setBounds(0, 0, 2000, 2000);
@@ -105,7 +113,7 @@ export class MainScene extends Phaser.Scene {
 
     // Build Walls
     this.walls = this.physics.add.staticGroup();
-    missionConf.walls.forEach((w) => {
+    mapConf.walls.forEach((w) => {
       const wall = this.add.tileSprite(w.x, w.y, w.w, w.h, 'wall');
       this.physics.add.existing(wall, true);
       this.walls.add(wall);
@@ -169,7 +177,9 @@ export class MainScene extends Phaser.Scene {
       isHost: this.isHost,
       broadcastEffect: (effect, x, y) => this.broadcastEffect(effect, x, y),
       countAliveEnemies: (enemyId) => this.enemyManager.countAlive(enemyId),
+      countAliveTotal: () => this.enemyManager.enemies.countActive(true),
       spawnEnemy: (definition, x, y) => this.enemyManager.spawnEnemy(definition, x, y),
+      onMapComplete: () => this.handleMapComplete(),
     });
 
     // Core Colliders
@@ -250,6 +260,19 @@ export class MainScene extends Phaser.Scene {
       .setVisible(false)
       .setDepth(300);
 
+    this.mapCompleteText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2, 'MAP COMPLETE', {
+        fontSize: '48px',
+        align: 'center',
+        fontFamily: 'Courier',
+        fontStyle: 'bold',
+        color: '#00ffcc',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setVisible(false)
+      .setDepth(300);
+
     this.input.once('pointerdown', () => {
       if (synth) synth.unlock();
     });
@@ -265,7 +288,7 @@ export class MainScene extends Phaser.Scene {
 
     this.scale.on('resize', this.resize, this);
 
-    this.mapManager.init(missionConf.spawnSchedule, this.time.now);
+    this.mapManager.init(mapConf.spawnSchedule, this.time.now);
   }
 
   private isInBaseArea(x: number, y: number) {
@@ -556,6 +579,9 @@ export class MainScene extends Phaser.Scene {
         case 'events':
           this.receiveEvents(message.events);
           break;
+        case 'map-complete':
+          this.showMapComplete(message.nextMapIndex);
+          break;
         default:
           // unknown host message
           break;
@@ -603,6 +629,47 @@ export class MainScene extends Phaser.Scene {
   resize(gameSize: Phaser.Structs.Size) {
     if (this.gameOverText) this.gameOverText.setPosition(gameSize.width / 2, gameSize.height / 2);
     if (this.pauseText) this.pauseText.setPosition(gameSize.width / 2, gameSize.height / 2);
+    if (this.mapCompleteText) {
+      this.mapCompleteText.setPosition(gameSize.width / 2, gameSize.height / 2);
+    }
+  }
+
+  // Host-only: called by MapManager once every enemy on the current map is dead.
+  // Tells clients, then shows the success message locally on host and clients alike.
+  private handleMapComplete() {
+    const nextMapIndex = this.mapIndex + 1;
+    const hasNextMap = nextMapIndex < this.missionConfig.mapIds.length;
+
+    if (this.sendPeerMessage) {
+      const message: PeerMapCompleteMessage = {
+        type: 'map-complete',
+        nextMapIndex: hasNextMap ? nextMapIndex : null,
+      };
+      this.sendPeerMessage(message);
+    }
+
+    this.showMapComplete(hasNextMap ? nextMapIndex : null);
+  }
+
+  // Shows the success banner and, if there is a next map, switches every peer to it
+  // via sceneBridge after a beat so the message is actually readable.
+  private showMapComplete(nextMapIndex: number | null) {
+    this.mapCompleteText
+      .setText(nextMapIndex !== null ? 'MAP COMPLETE' : 'MISSION COMPLETE')
+      .setVisible(true);
+
+    if (nextMapIndex === null) return;
+
+    this.time.delayedCall(2500, () => {
+      sceneBridge.launch('MainScene', {
+        isHost: this.isHost,
+        roomCode: this.roomCode,
+        sendPeerMessage: this.sendPeerMessage,
+        localPeerId: this.localPeerId,
+        missionConfig: this.missionConfig,
+        mapIndex: nextMapIndex,
+      });
+    });
   }
 
   update(time: number, delta: number) {
