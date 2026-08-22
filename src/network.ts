@@ -50,6 +50,11 @@ export function createOrJoinPeerId<HostMessageFormat, ClientMessageFormat>(
   }
 
   function flushHostMessages() {
+    if (hostBuffer.length === 0) {
+      return;
+    }
+    // Connections are only added to `connections` once their data channel is
+    // open (see conn.on('open', ...) below), so it's always safe to send here.
     for (const connection of connections) {
       connection.send(hostBuffer);
     }
@@ -65,9 +70,9 @@ export function createOrJoinPeerId<HostMessageFormat, ClientMessageFormat>(
   });
 
   hostPeer.on('connection', (conn: DataConnection) => {
-    connections.push(conn);
     conn.on('open', () => {
       console.log('Client connected:', conn.peer);
+      connections.push(conn);
       hostCallback({
         type: 'connected',
         id: conn.peer,
@@ -139,10 +144,11 @@ function joinPeerId<HostMessageFormat, ClientMessageFormat>(
       clientBuffer = [];
     }
 
-    setInterval(flushClientMessages, 50);
-
     conn.on('open', () => {
       console.log(`Connected to ${peerId}`);
+      // Only start flushing once the data channel is actually open — sending
+      // any earlier throws "Connection is not open".
+      setInterval(flushClientMessages, 50);
       callback({
         type: 'start',
         sendMessage: sendClientMessage,

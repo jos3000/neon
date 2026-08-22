@@ -2,10 +2,8 @@ import { SnapshotInterpolation } from '@geckos.io/snapshot-interpolation';
 import { Snapshot } from '@geckos.io/snapshot-interpolation/lib/types';
 import Phaser from 'phaser';
 import { Controls } from './controls';
-import { MISSION_CONFIGS, enemyDefinitionLookup } from './data/data';
-import { relayRush } from './data/missions/relay-rush';
+import { enemyDefinitionLookup, MissionConfig } from './data/data';
 import { GameEvent } from './events';
-import { currentMissionId, setGameScene } from './main';
 import type { EnemyConfig } from './types/Enemy';
 import {
   PeerEffectMessage,
@@ -19,6 +17,14 @@ import { Synth } from './Synth';
 import { createTextures } from './graphics';
 
 const synth: Synth | null = new Synth();
+
+export type MainSceneInitData = {
+  isHost: boolean;
+  roomCode: string | null;
+  sendPeerMessage: ((msg: any) => void) | null;
+  localPeerId: string | null;
+  missionConfig: MissionConfig;
+};
 
 export class MainScene extends Phaser.Scene {
   private score = 0;
@@ -72,18 +78,19 @@ export class MainScene extends Phaser.Scene {
   private isHost = false;
   private roomCode: string | null = null;
   private sendPeerMessage: ((msg: any) => void) | null = null;
+  private missionConfig!: MissionConfig;
 
-  constructor(opts?: {
-    isHost?: boolean;
-    roomCode?: string | null;
-    sendPeerMessage?: (msg: any) => void;
-    localPeerId?: string;
-  }) {
+  constructor() {
     super({ key: 'MainScene' });
-    this.isHost = !!opts?.isHost;
-    this.roomCode = opts?.roomCode ?? null;
-    this.sendPeerMessage = opts?.sendPeerMessage ?? null;
-    this.localPeerId = opts?.localPeerId ?? null;
+  }
+
+  init(data?: MainSceneInitData) {
+    if (!data) return;
+    this.isHost = data.isHost;
+    this.roomCode = data.roomCode;
+    this.sendPeerMessage = data.sendPeerMessage;
+    this.localPeerId = data.localPeerId;
+    this.missionConfig = data.missionConfig;
   }
 
   preload() {
@@ -91,8 +98,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   create() {
-    setGameScene(this);
-    const missionConf = MISSION_CONFIGS[currentMissionId] || MISSION_CONFIGS[relayRush.id];
+    const missionConf = this.missionConfig;
 
     this.baseCenter = missionConf.baseCenter;
     this.baseRadius = missionConf.baseRadius;
@@ -825,6 +831,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   addRemotePlayer(peerId: string) {
+    console.log('creating remote player');
     const rp = this.players.create(this.baseCenter.x, this.baseCenter.y, 'guest');
     rp.setDepth(2);
     rp.setCollideWorldBounds(true);
@@ -1305,6 +1312,7 @@ export class MainScene extends Phaser.Scene {
 
   private broadcastEventQueue(eventQueue: GameEvent[]) {
     if (!this.isHost || !this.sendPeerMessage) return;
+    if (!eventQueue.length) return;
     const msg = { type: 'events', events: eventQueue };
     this.sendPeerMessage(msg);
   }
@@ -1510,10 +1518,6 @@ export class MainScene extends Phaser.Scene {
         this.laserGraphics.lineBetween(e.x, e.y, endPos.x, endPos.y);
       }
     });
-  }
-
-  destroy() {
-    this.controls.shutdown();
   }
 
   receivePositions(snapshot: Snapshot) {
