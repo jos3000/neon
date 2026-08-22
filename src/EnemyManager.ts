@@ -13,7 +13,14 @@ export interface EnemyManagerOptions {
   pushEvent: (event: GameEvent) => void;
   broadcastEffect: (effect: PeerEffectMessage['effect'], x?: number, y?: number) => void;
   addScore: (amount: number) => void;
-  fireBullet: (x: number, y: number, angle: number, speed: number) => void;
+  fireBullet: (
+    x: number,
+    y: number,
+    angle: number,
+    speed: number,
+    ownerType: 'player' | 'enemy',
+    ownerId: string
+  ) => void;
 }
 
 // Owns everything about turning an EnemyConfig into live sprites and driving
@@ -30,7 +37,14 @@ export class EnemyManager {
   private pushEvent: (event: GameEvent) => void;
   private broadcastEffect: (effect: PeerEffectMessage['effect'], x?: number, y?: number) => void;
   private addScore: (amount: number) => void;
-  private fireBullet: (x: number, y: number, angle: number, speed: number) => void;
+  private fireBullet: (
+    x: number,
+    y: number,
+    angle: number,
+    speed: number,
+    ownerType: 'player' | 'enemy',
+    ownerId: string
+  ) => void;
 
   private nextEnemyId = 0;
   private laserGraphics: Phaser.GameObjects.Graphics;
@@ -337,7 +351,14 @@ export class EnemyManager {
           time > (enemy.getData('nextShotAt') || 0)
         ) {
           const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
-          this.fireBullet(enemy.x, enemy.y, angle, definition.attack.projectileSpeed ?? 220);
+          this.fireBullet(
+            enemy.x,
+            enemy.y,
+            angle,
+            definition.attack.projectileSpeed ?? 220,
+            'enemy',
+            enemy.getData('syncId') as string
+          );
           enemy.setData('nextShotAt', time + definition.attack.fireRateMs);
         }
 
@@ -349,7 +370,14 @@ export class EnemyManager {
           for (let i = 0; i < (definition.attack.projectileCount ?? 3); i += 1) {
             const spread = (i - ((definition.attack.projectileCount ?? 3) - 1) / 2) * 0.15;
             const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y) + spread;
-            this.fireBullet(enemy.x, enemy.y, angle, definition.attack.projectileSpeed ?? 180);
+            this.fireBullet(
+              enemy.x,
+              enemy.y,
+              angle,
+              definition.attack.projectileSpeed ?? 180,
+              'enemy',
+              enemy.getData('syncId') as string
+            );
           }
           enemy.setData('nextShotAt', time + definition.attack.fireRateMs);
         }
@@ -402,12 +430,17 @@ export class EnemyManager {
   ) {
     const damage = 5;
     const bulletSprite = bullet as Phaser.GameObjects.Sprite;
+    // The bullet always gets destroyed on contact, even against its own team,
+    // so enemy-on-enemy fire still collides — it just doesn't hurt.
     this.pushEvent({
       type: 'bullet-destroyed',
       bulletId: bulletSprite.getData('syncId'),
       x: bulletSprite.x,
       y: bulletSprite.y,
     });
+
+    if (bulletSprite.getData('ownerType') === 'enemy') return;
+
     const enemySprite = enemy as Phaser.GameObjects.Sprite;
 
     // If this sprite represents a boss part, damage that part specifically.

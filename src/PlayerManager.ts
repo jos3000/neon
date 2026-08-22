@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import type { GameEvent } from './events';
 import type { PeerEffectMessage, PeerInputMessage } from './types/PeerMessages';
 
 export interface PlayerManagerOptions {
@@ -9,7 +10,15 @@ export interface PlayerManagerOptions {
   isGameOver: () => boolean;
   isInBaseArea: (x: number, y: number) => boolean;
   broadcastEffect: (effect: PeerEffectMessage['effect'], x?: number, y?: number) => void;
-  fireBullet: (x: number, y: number, angle: number, speed: number) => void;
+  pushEvent: (event: GameEvent) => void;
+  fireBullet: (
+    x: number,
+    y: number,
+    angle: number,
+    speed: number,
+    ownerType: 'player' | 'enemy',
+    ownerId: string
+  ) => void;
 }
 
 // Owns player sprite creation, color assignment, and lifecycle (death/respawn),
@@ -26,7 +35,15 @@ export class PlayerManager {
   private isGameOver: () => boolean;
   private isInBaseArea: (x: number, y: number) => boolean;
   private broadcastEffect: (effect: PeerEffectMessage['effect'], x?: number, y?: number) => void;
-  private fireBullet: (x: number, y: number, angle: number, speed: number) => void;
+  private pushEvent: (event: GameEvent) => void;
+  private fireBullet: (
+    x: number,
+    y: number,
+    angle: number,
+    speed: number,
+    ownerType: 'player' | 'enemy',
+    ownerId: string
+  ) => void;
 
   private playerColors: Record<string, number> = {};
 
@@ -38,6 +55,7 @@ export class PlayerManager {
     this.isGameOver = options.isGameOver;
     this.isInBaseArea = options.isInBaseArea;
     this.broadcastEffect = options.broadcastEffect;
+    this.pushEvent = options.pushEvent;
     this.fireBullet = options.fireBullet;
 
     this.players = this.scene.physics.add.group({ collideWorldBounds: true });
@@ -117,6 +135,25 @@ export class PlayerManager {
     this.handlePlayerDeath(player as Phaser.Physics.Arcade.Sprite);
   }
 
+  handleBulletHit(
+    bullet: Phaser.Types.Physics.Arcade.GameObjectWithBody,
+    player: Phaser.Types.Physics.Arcade.GameObjectWithBody
+  ) {
+    const bulletSprite = bullet as Phaser.GameObjects.Sprite;
+    // The bullet always gets destroyed on contact, even against its own team,
+    // so friendly fire still collides — it just doesn't hurt.
+    this.pushEvent({
+      type: 'bullet-destroyed',
+      bulletId: bulletSprite.getData('syncId'),
+      x: bulletSprite.x,
+      y: bulletSprite.y,
+    });
+
+    if (bulletSprite.getData('ownerType') === 'player') return;
+    if (this.isGameOver()) return;
+    this.handlePlayerDeath(player as Phaser.Physics.Arcade.Sprite);
+  }
+
   getAlivePlayers(): Phaser.GameObjects.Sprite[] {
     const alivePlayers: Phaser.GameObjects.Sprite[] = [];
 
@@ -188,7 +225,7 @@ export class PlayerManager {
       }
 
       if (isShooting && !this.isInBaseArea(rp.x, rp.y) && time > rp.getData('lastFired')) {
-        this.fireBullet(rp.x, rp.y, angle, 1000);
+        this.fireBullet(rp.x, rp.y, angle, 1000, 'player', id);
         rp.setData('lastFired', time + fireRate);
       }
     }

@@ -148,7 +148,9 @@ export class MainScene extends Phaser.Scene {
       isGameOver: () => this.gameOver,
       isInBaseArea: (x, y) => this.isInBaseArea(x, y),
       broadcastEffect: (effect, x, y) => this.broadcastEffect(effect, x, y),
-      fireBullet: (x, y, angle, speed) => this.bulletManager.fire(x, y, angle, speed),
+      pushEvent: (event) => this.eventQueue.push(event),
+      fireBullet: (x, y, angle, speed, ownerType, ownerId) =>
+        this.bulletManager.fire(x, y, angle, speed, ownerType, ownerId),
     });
 
     this.trackerManager = new TrackerManager({ scene: this });
@@ -169,7 +171,8 @@ export class MainScene extends Phaser.Scene {
       pushEvent: (event) => this.eventQueue.push(event),
       broadcastEffect: (effect, x, y) => this.broadcastEffect(effect, x, y),
       addScore: (amount) => this.addScore(amount),
-      fireBullet: (x, y, angle, speed) => this.bulletManager.fire(x, y, angle, speed),
+      fireBullet: (x, y, angle, speed, ownerType, ownerId) =>
+        this.bulletManager.fire(x, y, angle, speed, ownerType, ownerId),
     });
 
     this.mapManager = new MapManager({
@@ -199,6 +202,13 @@ export class MainScene extends Phaser.Scene {
         this.enemyManager.handleBulletHit,
         undefined,
         this.enemyManager
+      );
+      this.physics.add.collider(
+        this.bulletManager.bullets,
+        this.playerManager.players,
+        this.playerManager.handleBulletHit,
+        undefined,
+        this.playerManager
       );
       this.physics.add.collider(
         this.playerManager.players,
@@ -446,6 +456,7 @@ export class MainScene extends Phaser.Scene {
         x: b.x,
         y: b.y,
         r: b.rotation,
+        ownerType: (b.getData('ownerType') as 'player' | 'enemy') || 'enemy',
       })),
     };
 
@@ -530,6 +541,8 @@ export class MainScene extends Phaser.Scene {
         if (existing) return existing;
         const sprite = this.bulletManager.bullets.create(bullet.x, bullet.y, 'bullet');
         sprite.setData('syncId', bullet.id);
+        sprite.setData('ownerType', bullet.ownerType);
+        if (bullet.ownerType === 'enemy') sprite.setTint(0xff3333);
         this.entityLookup[bullet.id] = sprite;
         return sprite;
       },
@@ -701,7 +714,14 @@ export class MainScene extends Phaser.Scene {
           !this.isInBaseArea(this.player!.x, this.player!.y) &&
           time > this.lastFired
         ) {
-          this.bulletManager.fire(this.player!.x, this.player!.y, shootInput.angle, 1000);
+          this.bulletManager.fire(
+            this.player!.x,
+            this.player!.y,
+            shootInput.angle,
+            1000,
+            'player',
+            (this.player!.getData('syncId') as string) || 'host'
+          );
           this.lastFired = time + this.fireRate;
         }
       } else if (moveX !== 0 || moveY !== 0) {

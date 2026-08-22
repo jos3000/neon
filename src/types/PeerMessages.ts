@@ -14,6 +14,7 @@ export type BulletSnapshot = {
   x: number;
   y: number;
   r: number;
+  ownerType: 'player' | 'enemy';
 };
 
 export type EnemySnapshot = {

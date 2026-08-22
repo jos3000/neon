@@ -38,9 +38,9 @@ export class BulletManager {
 
   // Generates a new bullet id and pushes a 'bullet-created' event, built by
   // createBulletSprite() on host and clients alike, the same way enemies are.
-  fire(x: number, y: number, angle: number, speed: number) {
+  fire(x: number, y: number, angle: number, speed: number, ownerType: 'player' | 'enemy', ownerId: string) {
     const bulletId = `bullet-${++this.nextBulletId}`;
-    this.pushEvent({ type: 'bullet-created', bulletId, x, y, angle, speed });
+    this.pushEvent({ type: 'bullet-created', bulletId, x, y, angle, speed, ownerType, ownerId });
   }
 
   createBulletSprite(event: BulletCreatedEvent) {
@@ -48,7 +48,13 @@ export class BulletManager {
     this.entityLookup[event.bulletId] = bulletSprite;
     bulletSprite.setData('syncId', event.bulletId);
     bulletSprite.setData('angle', event.angle);
+    bulletSprite.setData('ownerType', event.ownerType);
+    bulletSprite.setData('ownerId', event.ownerId);
     bulletSprite.setDepth(1);
+    // Tint enemy fire red so it reads as hostile at a glance; player bullets keep the base yellow.
+    if (event.ownerType === 'enemy') {
+      bulletSprite.setTint(0xff3333);
+    }
     if (this.isHost) {
       bulletSprite.setData('speed', event.speed);
       this.scene.physics.velocityFromRotation(

@@ -13,6 +13,8 @@ interface BulletCreatedEvent {
   y: number;
   angle: number;
   speed: number;
+  ownerType: 'player' | 'enemy';
+  ownerId: string;
 }
 
 // bullet destroyed
