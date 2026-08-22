@@ -421,6 +421,16 @@ export class MainScene extends Phaser.Scene {
         this.playerManager.removeRemotePlayer(event.peerId);
         break;
       }
+      case 'player-died': {
+        const sprite = this.playerManager.playerSprites[event.peerId];
+        if (sprite) this.playerManager.applyPlayerDeath(sprite);
+        break;
+      }
+      case 'player-respawned': {
+        const sprite = this.playerManager.playerSprites[event.peerId];
+        if (sprite) this.playerManager.respawnPlayer(sprite);
+        break;
+      }
     }
   }
 
@@ -502,6 +512,13 @@ export class MainScene extends Phaser.Scene {
       sprite.rotation = r;
       if ('visible' in rest && typeof rest.visible === 'boolean') {
         sprite.setVisible(rest.visible);
+      }
+      // Late-joining clients get a player's death state from this connect-time
+      // snapshot instead of the 'player-died' event (they weren't connected when
+      // it fired) — see broadcastState.
+      if ('isDead' in rest && typeof rest.isDead === 'boolean') {
+        sprite.setData('isDead', rest.isDead);
+        sprite.setVisible(!rest.isDead);
       }
       existing.add(id);
     }

@@ -66,6 +66,18 @@ interface PlayerLeftEvent {
   peerId: string;
 }
 
+// player died / respawned
+
+interface PlayerDiedEvent {
+  type: 'player-died';
+  peerId: string;
+}
+
+interface PlayerRespawnedEvent {
+  type: 'player-respawned';
+  peerId: string;
+}
+
 // player spawned
 
 export type GameEvent =
@@ -74,4 +86,6 @@ export type GameEvent =
   | EnemyCreatedEvent
   | EnemyHitEvent
   | EnemyDestroyedEvent
-  | PlayerLeftEvent;
+  | PlayerLeftEvent
+  | PlayerDiedEvent
+  | PlayerRespawnedEvent;

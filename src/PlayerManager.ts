@@ -111,19 +111,35 @@ export class PlayerManager {
     player.setVelocity(0, 0);
   }
 
-  handlePlayerDeath(player: Phaser.Physics.Arcade.Sprite) {
-    if (!player || !player.active || player.getData('isDead')) return;
+  // Applies the actual death visuals/state to a sprite. Invoked via the 'player-died'
+  // event on host and clients alike (see handlePlayerDeath below), the same way enemy
+  // destruction is applied uniformly through 'enemy-destroyed' — otherwise only the
+  // host's own copy of the sprite would ever reflect the death.
+  applyPlayerDeath(player: Phaser.Physics.Arcade.Sprite) {
+    if (!player || !player.active) return;
 
     player.setData('isDead', true);
     player.setTint(0xff0000);
     player.setVelocity(0, 0);
     player.body.enable = false;
     player.setVisible(false);
+  }
+
+  // Host-only: decides a player has died (from a collision, so only ever runs where
+  // physics colliders are registered — see MainScene's `if (this.isHost)` collider
+  // setup) and schedules their respawn. The actual state change is deferred to the
+  // 'player-died'/'player-respawned' events so it applies the same way on every peer.
+  handlePlayerDeath(player: Phaser.Physics.Arcade.Sprite) {
+    if (!player || !player.active || player.getData('isDead')) return;
+
+    player.setData('isDead', true);
+    const peerId = player.getData('syncId') as string;
+    this.pushEvent({ type: 'player-died', peerId });
     this.broadcastEffect('death', player.x, player.y);
 
     this.scene.time.delayedCall(3000, () => {
       if (!player || !player.active) return;
-      this.respawnPlayer(player);
+      this.pushEvent({ type: 'player-respawned', peerId });
     });
   }
 
