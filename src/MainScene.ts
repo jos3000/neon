@@ -1140,14 +1140,16 @@ export class MainScene extends Phaser.Scene {
         let my = rp.getData('moveY') || 0;
         rp.setVelocity(mx * speed, my * speed);
 
-        if (mx !== 0 || my !== 0) rp.rotation = Math.atan2(my, mx);
+        const isShooting = !!rp.getData('shoot');
+        const angle = rp.getData('aimAngle') || 0;
 
-        if (
-          rp.getData('shoot') &&
-          !this.isInBaseArea(rp.x, rp.y) &&
-          time > rp.getData('lastFired')
-        ) {
-          const angle = rp.getData('aimAngle') || 0;
+        if (isShooting) {
+          rp.rotation = angle;
+        } else if (mx !== 0 || my !== 0) {
+          rp.rotation = Math.atan2(my, mx);
+        }
+
+        if (isShooting && !this.isInBaseArea(rp.x, rp.y) && time > rp.getData('lastFired')) {
           const bulletId = `bullet-${++this.nextBulletId}`;
           this.eventQueue.push({
             type: 'bullet-created',
