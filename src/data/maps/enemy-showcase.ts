@@ -13,11 +13,31 @@ export const enemyShowcase: Map = {
     { x: 360, y: 600, w: 220, h: 24 },
     { x: 860, y: 620, w: 220, h: 24 },
   ],
-  enemies: [
-    { id: 'arc-viper', x: 240, y: 300 },
-    { id: 'eclipse-guardian', x: 520, y: 240 },
-    { id: 'glitch-scout', x: 840, y: 260 },
-    { id: 'neon-mite', x: 640, y: 500 },
-    { id: 'void-warden', x: 1080, y: 560 },
+  spawnSchedule: [
+    {
+      type: 'time',
+      atSeconds: 3,
+      spawns: [{ id: 'neon-mite', x: 640, y: 500 }],
+    },
+    {
+      type: 'time',
+      atSeconds: 8,
+      spawns: [{ id: 'glitch-scout', x: 840, y: 260 }],
+    },
+    {
+      type: 'time',
+      atSeconds: 13,
+      spawns: [{ id: 'arc-viper', x: 240, y: 300 }],
+    },
+    {
+      type: 'time',
+      atSeconds: 18,
+      spawns: [{ id: 'eclipse-guardian', x: 520, y: 240 }],
+    },
+    {
+      type: 'time',
+      atSeconds: 23,
+      spawns: [{ id: 'void-warden', x: 1080, y: 560 }],
+    },
   ],
 };

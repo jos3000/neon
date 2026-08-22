@@ -6,6 +6,7 @@ import { Controls } from './controls';
 import { enemyDefinitionLookup, MissionConfig } from './data/data';
 import { EnemyManager } from './EnemyManager';
 import { GameEvent } from './events';
+import { MapManager, SPAWN_TELEGRAPH_MS } from './MapManager';
 import { PlayerManager } from './PlayerManager';
 import { TrackerManager } from './TrackerManager';
 import {
@@ -43,6 +44,7 @@ export class MainScene extends Phaser.Scene {
   private playerManager!: PlayerManager;
   private bulletManager!: BulletManager;
   private enemyManager!: EnemyManager;
+  private mapManager!: MapManager;
   private trackerManager!: TrackerManager;
 
   private bulletSprites: Record<string, Phaser.GameObjects.Sprite> = {};
@@ -156,11 +158,18 @@ export class MainScene extends Phaser.Scene {
       entityLookup: this.entityLookup,
       baseCenter: this.baseCenter,
       baseRadius: this.baseRadius,
-      isHost: this.isHost,
       pushEvent: (event) => this.eventQueue.push(event),
       broadcastEffect: (effect, x, y) => this.broadcastEffect(effect, x, y),
       addScore: (amount) => this.addScore(amount),
       fireBullet: (x, y, angle, speed) => this.bulletManager.fire(x, y, angle, speed),
+    });
+
+    this.mapManager = new MapManager({
+      scene: this,
+      isHost: this.isHost,
+      broadcastEffect: (effect, x, y) => this.broadcastEffect(effect, x, y),
+      countAliveEnemies: (enemyId) => this.enemyManager.countAlive(enemyId),
+      spawnEnemy: (definition, x, y) => this.enemyManager.spawnEnemy(definition, x, y),
     });
 
     // Core Colliders
@@ -256,7 +265,7 @@ export class MainScene extends Phaser.Scene {
 
     this.scale.on('resize', this.resize, this);
 
-    this.enemyManager.initMapEnemies(missionConf.enemySpawns);
+    this.mapManager.init(missionConf.spawnSchedule, this.time.now);
   }
 
   private isInBaseArea(x: number, y: number) {
@@ -291,7 +300,27 @@ export class MainScene extends Phaser.Scene {
       case 'laser':
         if (synth) synth.playLaser();
         break;
+      case 'spawn-warning':
+        if (x !== undefined && y !== undefined) this.showSpawnWarning(x, y);
+        if (synth) synth.playWarning();
+        break;
     }
+  }
+
+  private showSpawnWarning(x: number, y: number) {
+    const ring = this.add
+      .circle(x, y, 10, 0xff3300, 0)
+      .setStrokeStyle(3, 0xff3300, 0.9)
+      .setDepth(15);
+
+    this.tweens.add({
+      targets: ring,
+      radius: 48,
+      alpha: 0,
+      duration: SPAWN_TELEGRAPH_MS,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy(),
+    });
   }
 
   private broadcastEffect(effect: PeerEffectMessage['effect'], x?: number, y?: number) {
@@ -322,7 +351,7 @@ export class MainScene extends Phaser.Scene {
         break;
       }
       case 'enemy-created': {
-        if (this.entityLookup[event.enemyId]) break; // already known (e.g. from initMapEnemies)
+        if (this.entityLookup[event.enemyId]) break; // already known (event replayed twice)
         const definition = enemyDefinitionLookup[event.definitionId];
         if (definition) {
           this.enemyManager.createEnemySprite(definition, event.x, event.y, event.enemyId);
@@ -363,9 +392,9 @@ export class MainScene extends Phaser.Scene {
   }
 
   // Full snapshot sent on every client connect/disconnect, so a (re)joining client can
-  // catch up on players, in-flight bullets, and any enemies it hasn't seen yet (most
-  // enemies are already created locally via the deterministic initMapEnemies() layout
-  // and just get repositioned here — see receiveEntitySnapshot).
+  // catch up on players, in-flight bullets, and any enemies it hasn't seen yet — every
+  // enemy is spawned at runtime via the 'enemy-created' event (see spawnEnemy), so a
+  // client that joins after a spawn never saw that event and relies on this instead.
   broadcastState() {
     if (!this.isHost || !this.sendPeerMessage) return;
 
@@ -378,10 +407,9 @@ export class MainScene extends Phaser.Scene {
         r: e.rotation,
         isDead: e.getData('isDead') as boolean,
       })),
-      // Most enemies are created deterministically by initMapEnemies() on both sides and
-      // just need this for late-joining clients to catch up (see receiveEntitySnapshot);
-      // enemies spawned dynamically at runtime (e.g. by a spawner) rely on this too, since
-      // a client that joins after the spawn never saw its 'enemy-created' event.
+      // All enemies are spawned dynamically at runtime (via MapManager's schedule or a
+      // spawner), so late-joining clients rely entirely on this to catch up — see
+      // receiveEntitySnapshot.
       enemies: this.enemyManager.enemies.getChildren().map((e: Phaser.GameObjects.Sprite) => ({
         id: (e.getData('syncId') as string) || '',
         x: e.x,
@@ -485,10 +513,9 @@ export class MainScene extends Phaser.Scene {
       (id) => delete this.entityLookup[id]
     );
 
-    // Enemies from the deterministic mission layout already exist locally (via
-    // initMapEnemies, same id on every peer) and are just reused/repositioned here.
-    // Only enemies this client has never seen — e.g. spawned by a spawner before it
-    // joined — actually get created.
+    // Enemies this client already knows about (from a live 'enemy-created' event) are
+    // just reused/repositioned here. Only enemies it never saw — e.g. spawned by the
+    // map's schedule or a spawner before it joined — actually get created.
     this.syncSprites(
       data.enemies,
       this.enemySprites,
@@ -622,6 +649,7 @@ export class MainScene extends Phaser.Scene {
 
       const alivePlayers = this.playerManager.getAlivePlayers();
       this.enemyManager.update(time, alivePlayers);
+      this.mapManager.update(time);
 
       const snapshot = this.SI.snapshot.create(
         Object.entries(this.entityLookup).map(([id, p]) => ({

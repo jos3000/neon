@@ -1,5 +1,5 @@
 import type { EnemyConfig } from '../types/Enemy';
-import type { Map as GameMap } from '../types/Map';
+import type { Map as GameMap, SpawnTrigger } from '../types/Map';
 import type { Mission as GameMission } from '../types/Mission';
 import { relayRush } from './missions/relay-rush';
 import { phaseShift } from './missions/phase-shift';
@@ -24,7 +24,7 @@ export type MissionConfig = {
   name: string;
   baseCenter: { x: number; y: number };
   baseRadius: number;
-  enemySpawns: { id: string; x: number; y: number }[];
+  spawnSchedule: SpawnTrigger[];
   walls: WallConfig[];
   mapIds: string[];
 };
@@ -62,7 +62,7 @@ export function buildMissionConfig(mission: GameMission): MissionConfig {
     name: mission.name,
     baseCenter: primaryMap.base ?? { x: primaryMap.width / 2, y: primaryMap.height / 2 },
     baseRadius: Math.max(120, Math.min(primaryMap.width, primaryMap.height) * 0.2),
-    enemySpawns: primaryMap.enemies.map((enemy) => ({ id: enemy.id, x: enemy.x, y: enemy.y })),
+    spawnSchedule: primaryMap.spawnSchedule,
     walls: primaryMap.walls.map((wall) => ({ ...wall })),
     mapIds: mission.maps,
   };

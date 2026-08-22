@@ -82,4 +82,8 @@ export class Synth {
     this.playOsc('sawtooth', 700, 0.25, 0.2);
     this.playOsc('sine', 1100, 0.25, 0.15);
   }
+  playWarning() {
+    this.playOsc('square', 500, 0.14, 0.16);
+    setTimeout(() => this.playOsc('square', 500, 0.14, 0.16), 180);
+  }
 }

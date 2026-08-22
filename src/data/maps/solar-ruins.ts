@@ -12,8 +12,34 @@ export const solarRuins: Map = {
     { x: 520, y: 560, w: 260, h: 24 },
     { x: 1020, y: 640, w: 180, h: 24 },
   ],
-  enemies: [
-    { id: 'void-warden', x: 920, y: 300 },
-    { id: 'neon-mite', x: 260, y: 420 },
+  spawnSchedule: [
+    {
+      type: 'time',
+      atSeconds: 6,
+      spawns: [
+        { id: 'neon-mite', x: 260, y: 420 },
+        { id: 'neon-mite', x: 320, y: 460 },
+      ],
+    },
+    {
+      type: 'time',
+      atSeconds: 25,
+      spawns: [{ id: 'void-warden', x: 920, y: 300 }],
+    },
+    {
+      type: 'threshold',
+      enemyId: 'neon-mite',
+      belowCount: 1,
+      spawns: [
+        { id: 'neon-mite', x: 260, y: 420 },
+        { id: 'glitch-scout', x: 640, y: 400 },
+      ],
+    },
+    {
+      type: 'threshold',
+      enemyId: 'void-warden',
+      belowCount: 1,
+      spawns: [{ id: 'arc-viper', x: 700, y: 500 }],
+    },
   ],
 };

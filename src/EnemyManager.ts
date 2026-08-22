@@ -1,5 +1,4 @@
 import Phaser from 'phaser';
-import { enemyDefinitionLookup } from './data/data';
 import type { GameEvent } from './events';
 import type { EnemyConfig } from './types/Enemy';
 import type { PeerEffectMessage } from './types/PeerMessages';
@@ -10,7 +9,6 @@ export interface EnemyManagerOptions {
   entityLookup: Record<string, Phaser.GameObjects.Sprite>;
   baseCenter: { x: number; y: number };
   baseRadius: number;
-  isHost: boolean;
   pushEvent: (event: GameEvent) => void;
   broadcastEffect: (effect: PeerEffectMessage['effect'], x?: number, y?: number) => void;
   addScore: (amount: number) => void;
@@ -28,7 +26,6 @@ export class EnemyManager {
   private entityLookup: Record<string, Phaser.GameObjects.Sprite>;
   private baseCenter: { x: number; y: number };
   private baseRadius: number;
-  private isHost: boolean;
   private pushEvent: (event: GameEvent) => void;
   private broadcastEffect: (effect: PeerEffectMessage['effect'], x?: number, y?: number) => void;
   private addScore: (amount: number) => void;
@@ -44,7 +41,6 @@ export class EnemyManager {
     this.entityLookup = options.entityLookup;
     this.baseCenter = options.baseCenter;
     this.baseRadius = options.baseRadius;
-    this.isHost = options.isHost;
     this.pushEvent = options.pushEvent;
     this.broadcastEffect = options.broadcastEffect;
     this.addScore = options.addScore;
@@ -173,24 +169,16 @@ export class EnemyManager {
     return coreSprite;
   }
 
-  initMapEnemies(spawns: { id: string; x: number; y: number }[]) {
-    spawns.forEach((spawn) => {
-      const definition = enemyDefinitionLookup[spawn.id];
-      if (!definition) return;
-
-      const sprite = this.createEnemySprite(definition, spawn.x, spawn.y);
-      if (!sprite) return;
-
-      if (this.isHost) {
-        this.broadcastEffect(definition.type === 'boss' ? 'big-spawn' : 'spawn');
-      }
-    });
+  countAlive(enemyId: string): number {
+    return this.enemies
+      .getChildren()
+      .filter((e) => e.active && e.getData('enemyId') === enemyId).length;
   }
 
-  // For host-only, runtime-decided enemy creation (e.g. a spawner enemy producing
-  // more enemies over time) — unlike the deterministic initMapEnemies() layout, these
-  // aren't created independently on both sides, so they're pushed as a GameEvent and
-  // built by MainScene's handleEvent() on host and clients alike, the same way bullets are.
+  // Host-only, runtime-decided enemy creation (from MapManager's spawn schedule, or a
+  // spawner enemy producing more enemies over time). Since only the host decides when
+  // and where, the enemy is pushed as a GameEvent and built by MainScene's handleEvent()
+  // on host and clients alike, the same way bullets are.
   spawnEnemy(definition: EnemyConfig, x: number, y: number): string {
     const enemyId = `enemy-${++this.nextEnemyId}`;
     this.pushEvent({ type: 'enemy-created', enemyId, definitionId: definition.id, x, y });

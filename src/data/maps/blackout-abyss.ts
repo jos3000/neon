@@ -12,9 +12,39 @@ export const blackoutAbyss: Map = {
     { x: 360, y: 620, w: 280, h: 24 },
     { x: 1040, y: 720, w: 220, h: 24 },
   ],
-  enemies: [
-    { id: 'glitch-scout', x: 360, y: 340 },
-    { id: 'arc-viper', x: 840, y: 500 },
-    { id: 'void-warden', x: 1200, y: 320 },
+  spawnSchedule: [
+    {
+      type: 'time',
+      atSeconds: 5,
+      spawns: [{ id: 'glitch-scout', x: 360, y: 340 }],
+    },
+    {
+      type: 'time',
+      atSeconds: 18,
+      spawns: [
+        { id: 'arc-viper', x: 840, y: 500 },
+        { id: 'glitch-scout', x: 780, y: 460 },
+      ],
+    },
+    {
+      type: 'time',
+      atSeconds: 40,
+      spawns: [{ id: 'void-warden', x: 1200, y: 320 }],
+    },
+    {
+      type: 'threshold',
+      enemyId: 'glitch-scout',
+      belowCount: 1,
+      spawns: [
+        { id: 'glitch-scout', x: 360, y: 340 },
+        { id: 'glitch-scout', x: 420, y: 380 },
+      ],
+    },
+    {
+      type: 'threshold',
+      enemyId: 'void-warden',
+      belowCount: 1,
+      spawns: [{ id: 'arc-viper', x: 1160, y: 360 }],
+    },
   ],
 };

@@ -42,7 +42,15 @@ export type PeerInputMessage = {
 
 export type PeerEffectMessage = {
   type: 'effect';
-  effect: 'explosion' | 'hit' | 'spawn' | 'big-spawn' | 'death' | 'shot' | 'laser';
+  effect:
+    | 'explosion'
+    | 'hit'
+    | 'spawn'
+    | 'big-spawn'
+    | 'death'
+    | 'shot'
+    | 'laser'
+    | 'spawn-warning';
   x?: number;
   y?: number;
 };
