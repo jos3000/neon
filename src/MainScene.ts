@@ -600,10 +600,12 @@ export class MainScene extends Phaser.Scene {
   private handleEvent(event: GameEvent) {
     switch (event.type) {
       case 'bullet-destroyed': {
-        // destroy the bullet and show an impact effect
+        // destroy the bullet and show an impact effect at the host's authoritative
+        // impact position (event.x/y) — the client's own bulletSprite.x/y lags behind
+        // due to snapshot interpolation, so using it here made the effect land short.
         const bulletSprite = this.getEntityBySyncId(event.bulletId);
+        this.emitter.explode(4, event.x, event.y);
         if (bulletSprite) {
-          this.emitter.explode(4, bulletSprite.x, bulletSprite.y);
           bulletSprite.destroy();
           delete this.entityLookup[event.bulletId];
         }
@@ -631,6 +633,8 @@ export class MainScene extends Phaser.Scene {
               this.eventQueue.push({
                 type: 'bullet-destroyed',
                 bulletId: this.getData('syncId'),
+                x: this.x,
+                y: this.y,
               });
             }
           };
@@ -680,6 +684,8 @@ export class MainScene extends Phaser.Scene {
     this.eventQueue.push({
       type: 'bullet-destroyed',
       bulletId: bulletSprite.getData('syncId'),
+      x: bulletSprite.x,
+      y: bulletSprite.y,
     });
   }
 
@@ -691,6 +697,8 @@ export class MainScene extends Phaser.Scene {
     this.eventQueue.push({
       type: 'bullet-destroyed',
       bulletId: bulletSprite.getData('syncId'),
+      x: bulletSprite.x,
+      y: bulletSprite.y,
     });
     const enemySprite = enemy as Phaser.GameObjects.Sprite;
 

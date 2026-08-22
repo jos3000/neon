@@ -20,6 +20,12 @@ interface BulletCreatedEvent {
 interface BulletDestroyedEvent {
   type: 'bullet-destroyed';
   bulletId: string;
+  // The host's authoritative impact position. The client's own view of the bullet's
+  // position lags behind (it's smoothed via snapshot interpolation), so the explosion
+  // effect must use this rather than wherever the client currently renders the bullet,
+  // or it visibly lands short of what it actually hit.
+  x: number;
+  y: number;
 }
 
 // enemy created (e.g. by a spawner, at a time/count the host alone decides)
