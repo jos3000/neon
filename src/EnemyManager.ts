@@ -428,7 +428,7 @@ export class EnemyManager {
     bullet: Phaser.Types.Physics.Arcade.GameObjectWithBody,
     enemy: Phaser.Types.Physics.Arcade.GameObjectWithBody
   ) {
-    const damage = 5;
+    const damage = 10;
     const bulletSprite = bullet as Phaser.GameObjects.Sprite;
     // The bullet always gets destroyed on contact, even against its own team,
     // so enemy-on-enemy fire still collides — it just doesn't hurt.
