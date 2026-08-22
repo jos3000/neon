@@ -370,7 +370,9 @@ export class MainScene extends Phaser.Scene {
 
   private addScore(amount: number) {
     this.score += amount;
-    this.scoreText.setText('SCORE: ' + this.score + ' | ROLE: HOST (' + (this.roomCode ?? '') + ')');
+    this.scoreText.setText(
+      'SCORE: ' + this.score + ' | ROLE: HOST (' + (this.roomCode ?? '') + ')'
+    );
   }
 
   private handleEvent(event: GameEvent) {
@@ -575,7 +577,10 @@ export class MainScene extends Phaser.Scene {
       (enemy) => {
         const existing = this.entityLookup[enemy.id];
         if (existing) return existing;
-        const textureKey = this.enemyManager.resolveEnemyTextureKey(enemy.definitionId, enemy.partId);
+        const textureKey = this.enemyManager.resolveEnemyTextureKey(
+          enemy.definitionId,
+          enemy.partId
+        );
         const sprite = this.enemyManager.enemies.create(enemy.x, enemy.y, textureKey);
         sprite.setData('syncId', enemy.id);
         sprite.setData('enemyId', enemy.definitionId);
@@ -714,6 +719,7 @@ export class MainScene extends Phaser.Scene {
 
     if (this.gameOver || this.isPaused || !this.gameStarted) return;
 
+    // handle local player's movement
     if (!this.player!.getData('isDead')) {
       const movement = this.controls.getMovementInput();
       const moveX = movement.x;
