@@ -170,9 +170,8 @@ export class EnemyManager {
   }
 
   countAlive(enemyId: string): number {
-    return this.enemies
-      .getChildren()
-      .filter((e) => e.active && e.getData('enemyId') === enemyId).length;
+    return this.enemies.getChildren().filter((e) => e.active && e.getData('enemyId') === enemyId)
+      .length;
   }
 
   // Host-only, runtime-decided enemy creation (from MapManager's spawn schedule, or a
@@ -317,8 +316,7 @@ export class EnemyManager {
         ) {
           for (let i = 0; i < (definition.attack.projectileCount ?? 3); i += 1) {
             const spread = (i - ((definition.attack.projectileCount ?? 3) - 1) / 2) * 0.15;
-            const angle =
-              Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y) + spread;
+            const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y) + spread;
             this.fireBullet(enemy.x, enemy.y, angle, definition.attack.projectileSpeed ?? 180);
           }
           enemy.setData('nextShotAt', time + definition.attack.fireRateMs);
@@ -370,6 +368,7 @@ export class EnemyManager {
     bullet: Phaser.Types.Physics.Arcade.GameObjectWithBody,
     enemy: Phaser.Types.Physics.Arcade.GameObjectWithBody
   ) {
+    const damage = 5;
     const bulletSprite = bullet as Phaser.GameObjects.Sprite;
     this.pushEvent({
       type: 'bullet-destroyed',
@@ -393,7 +392,7 @@ export class EnemyManager {
         return;
       }
 
-      const hp = (enemySprite.getData('hp') as number) - 1;
+      const hp = (enemySprite.getData('hp') as number) - damage;
       enemySprite.setData('hp', hp);
 
       if (hp <= 0) {
