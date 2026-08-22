@@ -39,5 +39,15 @@ export const enemyShowcase: Map = {
       atSeconds: 23,
       spawns: [{ id: 'void-warden', x: 1080, y: 560 }],
     },
+    {
+      type: 'time',
+      atSeconds: 28,
+      spawns: [{ id: 'hive-spawner', x: 1150, y: 500 }],
+    },
+    {
+      type: 'time',
+      atSeconds: 33,
+      spawns: [{ id: 'rift-seeder', x: 150, y: 500 }],
+    },
   ],
 };

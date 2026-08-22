@@ -43,5 +43,10 @@ export const harborOfStatic: Map = {
       belowCount: 1,
       spawns: [{ id: 'glitch-scout', x: 780, y: 460 }],
     },
+    {
+      type: 'time',
+      atSeconds: 30,
+      spawns: [{ id: 'hive-spawner', x: 1300, y: 300 }],
+    },
   ],
 };

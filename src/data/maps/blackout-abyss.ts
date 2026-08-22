@@ -46,5 +46,10 @@ export const blackoutAbyss: Map = {
       belowCount: 1,
       spawns: [{ id: 'arc-viper', x: 1160, y: 360 }],
     },
+    {
+      type: 'time',
+      atSeconds: 45,
+      spawns: [{ id: 'hive-spawner', x: 1400, y: 180 }],
+    },
   ],
 };

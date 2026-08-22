@@ -41,5 +41,10 @@ export const solarRuins: Map = {
       belowCount: 1,
       spawns: [{ id: 'arc-viper', x: 700, y: 500 }],
     },
+    {
+      type: 'time',
+      atSeconds: 35,
+      spawns: [{ id: 'rift-seeder', x: 300, y: 760 }],
+    },
   ],
 };

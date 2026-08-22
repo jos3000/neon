@@ -41,5 +41,10 @@ export const quantumEcho: Map = {
       belowCount: 1,
       spawns: [{ id: 'void-warden', x: 1000, y: 300 }],
     },
+    {
+      type: 'time',
+      atSeconds: 40,
+      spawns: [{ id: 'rift-seeder', x: 1500, y: 600 }],
+    },
   ],
 };

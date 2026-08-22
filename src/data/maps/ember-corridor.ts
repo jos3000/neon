@@ -38,5 +38,10 @@ export const emberCorridor: Map = {
       belowCount: 1,
       spawns: [{ id: 'eclipse-guardian', x: 620, y: 360 }],
     },
+    {
+      type: 'time',
+      atSeconds: 35,
+      spawns: [{ id: 'rift-seeder', x: 1080, y: 180 }],
+    },
   ],
 };

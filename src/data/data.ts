@@ -16,6 +16,8 @@ import { eclipseGuardian } from './enemies/eclipse-guardian';
 import { glitchScout } from './enemies/glitch-scout';
 import { neonMite } from './enemies/neon-mite';
 import { voidWarden } from './enemies/void-warden';
+import { hiveSpawner } from './enemies/hive-spawner';
+import { riftSeeder } from './enemies/rift-seeder';
 
 export type WallConfig = { x: number; y: number; w: number; h: number };
 
@@ -48,6 +50,8 @@ export const enemyDefinitionLookup: Record<string, EnemyConfig> = {
   'glitch-scout': glitchScout,
   'neon-mite': neonMite,
   'void-warden': voidWarden,
+  'hive-spawner': hiveSpawner,
+  'rift-seeder': riftSeeder,
 };
 
 export const enemyDefinitions: EnemyConfig[] = [
@@ -56,6 +60,8 @@ export const enemyDefinitions: EnemyConfig[] = [
   glitchScout,
   neonMite,
   voidWarden,
+  hiveSpawner,
+  riftSeeder,
 ];
 
 export function buildMissionConfig(mission: GameMission): MissionConfig {

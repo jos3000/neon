@@ -38,5 +38,10 @@ export const echoGrid: Map = {
       belowCount: 1,
       spawns: [{ id: 'glitch-scout', x: 320, y: 220 }],
     },
+    {
+      type: 'time',
+      atSeconds: 30,
+      spawns: [{ id: 'hive-spawner', x: 980, y: 180 }],
+    },
   ],
 };

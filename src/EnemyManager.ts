@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import type { GameEvent } from './events';
-import type { EnemyConfig } from './types/Enemy';
+import type { EnemyConfig, SpawnerConfig } from './types/Enemy';
 import type { PeerEffectMessage } from './types/PeerMessages';
+import { enemyDefinitionLookup } from './data/data';
 
 export interface EnemyManagerOptions {
   scene: Phaser.Scene;
@@ -169,6 +170,33 @@ export class EnemyManager {
     return coreSprite;
   }
 
+  // Host-only: spawns minions from a standard enemy carrying a SpawnerConfig, at an
+  // interval that ramps up (down to half baseSpawnRateMs) the fewer minions it has
+  // alive, capped at spawnerConfig.maxActive concurrent minions of that type.
+  private updateSpawner(
+    enemy: Phaser.Physics.Arcade.Sprite,
+    spawnerConfig: SpawnerConfig,
+    time: number
+  ) {
+    const minionDefinition = enemyDefinitionLookup[spawnerConfig.minionNameRef];
+    if (!minionDefinition) return;
+
+    const activeMinions = this.countAlive(spawnerConfig.minionNameRef);
+    if (activeMinions >= spawnerConfig.maxActive) return;
+
+    const nextSpawnAt = (enemy.getData('nextSpawnAt') as number) || 0;
+    if (time < nextSpawnAt) return;
+
+    const urgency = 1 - activeMinions / spawnerConfig.maxActive;
+    const rate = spawnerConfig.baseSpawnRateMs * (1 - urgency * 0.5);
+    enemy.setData('nextSpawnAt', time + rate);
+
+    const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+    const x = enemy.x + Math.cos(angle) * spawnerConfig.spawnRadius;
+    const y = enemy.y + Math.sin(angle) * spawnerConfig.spawnRadius;
+    this.spawnEnemy(minionDefinition, x, y);
+  }
+
   countAlive(enemyId: string): number {
     return this.enemies.getChildren().filter((e) => e.active && e.getData('enemyId') === enemyId)
       .length;
@@ -298,6 +326,10 @@ export class EnemyManager {
 
       if (definition.type === 'standard') {
         this.updateEnemyBehavior(enemy, time, target, minDist);
+
+        if (definition.spawner) {
+          this.updateSpawner(enemy, definition.spawner, time);
+        }
 
         if (
           definition.attack.pattern === 'single_shot' &&
