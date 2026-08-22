@@ -597,6 +597,13 @@ export class MainScene extends Phaser.Scene {
     return this.entityLookup[syncId] as Phaser.Physics.Arcade.Sprite;
   }
 
+  private flashEnemyHit(sprite: Phaser.GameObjects.Sprite, indestructible: boolean) {
+    sprite.setTintFill(indestructible ? 0x999999 : 0xffffff);
+    this.time.delayedCall(indestructible ? 80 : 50, () => {
+      if (sprite && sprite.active) sprite.clearTint();
+    });
+  }
+
   private handleEvent(event: GameEvent) {
     switch (event.type) {
       case 'bullet-destroyed': {
@@ -647,6 +654,13 @@ export class MainScene extends Phaser.Scene {
         const definition = enemyDefinitionLookup[event.definitionId];
         if (definition) {
           this.createEnemySprite(definition, event.x, event.y, event.enemyId);
+        }
+        break;
+      }
+      case 'enemy-hit': {
+        const sprite = this.getEntityBySyncId(event.enemyId);
+        if (sprite && sprite.active) {
+          this.flashEnemyHit(sprite, !!event.indestructible);
         }
         break;
       }
@@ -708,9 +722,10 @@ export class MainScene extends Phaser.Scene {
       const destructible = enemySprite.getData('destructible');
       if (!destructible) {
         // Ping feedback for indestructible parts
-        enemySprite.setTintFill(0x999999);
-        this.time.delayedCall(80, () => {
-          if (enemySprite && enemySprite.active) enemySprite.clearTint();
+        this.eventQueue.push({
+          type: 'enemy-hit',
+          enemyId: enemySprite.getData('syncId') as string,
+          indestructible: true,
         });
         return;
       }
@@ -745,9 +760,9 @@ export class MainScene extends Phaser.Scene {
       }
 
       // Part was hit but not destroyed: flash
-      enemySprite.setTintFill(0xffffff);
-      this.time.delayedCall(50, () => {
-        if (enemySprite && enemySprite.active) enemySprite.clearTint();
+      this.eventQueue.push({
+        type: 'enemy-hit',
+        enemyId: enemySprite.getData('syncId') as string,
       });
 
       return;
@@ -768,9 +783,9 @@ export class MainScene extends Phaser.Scene {
         'SCORE: ' + this.score + ' | ROLE: HOST (' + (this.roomCode ?? '') + ')'
       );
     } else {
-      enemySprite.setTintFill(0xffffff);
-      this.time.delayedCall(50, () => {
-        if (enemySprite && enemySprite.active) enemySprite.clearTint();
+      this.eventQueue.push({
+        type: 'enemy-hit',
+        enemyId: enemySprite.getData('syncId') as string,
       });
     }
   }

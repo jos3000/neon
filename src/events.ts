@@ -38,6 +38,15 @@ interface EnemyCreatedEvent {
   y: number;
 }
 
+// enemy hit but not destroyed (tint-flash feedback only)
+
+interface EnemyHitEvent {
+  type: 'enemy-hit';
+  enemyId: string;
+  // indestructible parts flash a dimmer grey rather than the normal hit-white
+  indestructible?: boolean;
+}
+
 // enemy destroyed
 
 interface EnemyDestroyedEvent {
@@ -61,5 +70,6 @@ export type GameEvent =
   | BulletCreatedEvent
   | BulletDestroyedEvent
   | EnemyCreatedEvent
+  | EnemyHitEvent
   | EnemyDestroyedEvent
   | PlayerLeftEvent;
