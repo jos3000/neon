@@ -4,6 +4,7 @@ type ClientConnections = DataConnection[];
 
 interface StartEvent<MessageFormat> {
   type: 'start';
+  id: string;
   sendMessage: (msg: MessageFormat) => void;
 }
 
@@ -60,7 +61,7 @@ export function createOrJoinPeerId<HostMessageFormat, ClientMessageFormat>(
 
   hostPeer.on('open', () => {
     console.log(`Hosting with peer ID: ${peerId}`);
-    hostCallback({ type: 'start', sendMessage: sendHostMessage });
+    hostCallback({ type: 'start', sendMessage: sendHostMessage, id: peerId });
   });
 
   hostPeer.on('connection', (conn: DataConnection) => {
@@ -145,6 +146,7 @@ function joinPeerId<HostMessageFormat, ClientMessageFormat>(
       callback({
         type: 'start',
         sendMessage: sendClientMessage,
+        id: clientPeer.id,
       });
     });
 

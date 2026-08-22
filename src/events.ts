@@ -22,9 +22,38 @@ interface BulletDestroyedEvent {
   bulletId: string;
 }
 
-// enemy spawned
-// enemy destroyed
-// player spawned
-// player destroyed
+// enemy created (e.g. by a spawner, at a time/count the host alone decides)
 
-export type GameEvent = BulletCreatedEvent | BulletDestroyedEvent;
+interface EnemyCreatedEvent {
+  type: 'enemy-created';
+  enemyId: string;
+  definitionId: string;
+  x: number;
+  y: number;
+}
+
+// enemy destroyed
+
+interface EnemyDestroyedEvent {
+  type: 'enemy-destroyed';
+  enemyId: string;
+  // when the destroyed enemy is a boss core, its remaining parts share this id
+  // via their own 'parentEnemy' data and should be destroyed too
+  cascadeParentId?: string;
+}
+
+// player left
+
+interface PlayerLeftEvent {
+  type: 'player-left';
+  peerId: string;
+}
+
+// player spawned
+
+export type GameEvent =
+  | BulletCreatedEvent
+  | BulletDestroyedEvent
+  | EnemyCreatedEvent
+  | EnemyDestroyedEvent
+  | PlayerLeftEvent;

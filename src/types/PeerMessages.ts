@@ -9,19 +9,20 @@ export type PlayerSnapshot = {
   isDead: boolean;
 };
 
-export type EnemySnapshot = {
-  id: string;
-  x: number;
-  y: number;
-  r: number;
-  type: string;
-};
-
 export type BulletSnapshot = {
   id: string;
   x: number;
   y: number;
   r: number;
+};
+
+export type EnemySnapshot = {
+  id: string;
+  x: number;
+  y: number;
+  r: number;
+  definitionId: string;
+  partId?: string;
 };
 
 export type PeerEntityMessage = {

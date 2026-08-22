@@ -38,7 +38,7 @@ export function selectMission(missionId: string) {
       switch (hostEvent.type) {
         case 'start': {
           // Hosting: pass host info and sendMessage function into the game
-          startGame(true, targetPeerId, hostEvent.sendMessage);
+          startGame(true, targetPeerId, hostEvent.sendMessage, 'host');
           break;
         }
         case 'message': {
@@ -60,7 +60,7 @@ export function selectMission(missionId: string) {
       switch (clientEvent.type) {
         case 'start': {
           // Joined as client: pass client send function into the game
-          startGame(false, targetPeerId, clientEvent.sendMessage);
+          startGame(false, targetPeerId, clientEvent.sendMessage, clientEvent.id);
           break;
         }
         case 'message': {
@@ -84,13 +84,19 @@ const config: Phaser.Types.Core.GameConfig = {
   scene: undefined,
 };
 
-function startGame(hostFlag: boolean, code: string | null, sendMessage?: (msg: any) => void) {
+function startGame(
+  hostFlag: boolean,
+  code: string | null,
+  sendMessage?: (msg: any) => void,
+  localPeerId?: string
+) {
   hideLobbyOverlay();
 
   const sceneInstance = new MainScene({
     isHost: hostFlag,
     roomCode: code,
     sendPeerMessage: sendMessage,
+    localPeerId,
   });
 
   const runtimeConfig: Phaser.Types.Core.GameConfig = {

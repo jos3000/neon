@@ -12,10 +12,8 @@ import {
   PeerInputMessage,
   HostPeerMessage,
   ClientPeerMessage,
-  EnemySnapshot,
   PeerEntityMessage,
   PeerPositionMessage,
-  PlayerSnapshot,
 } from './types/PeerMessages';
 import { Synth } from './Synth';
 import { createTextures } from './graphics';
@@ -38,9 +36,9 @@ export class MainScene extends Phaser.Scene {
   private enemies!: Phaser.Physics.Arcade.Group;
   private players!: Phaser.Physics.Arcade.Group;
 
-  private enemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
   private playerSprites: Record<string, Phaser.Physics.Arcade.Sprite> = {};
   private bulletSprites: Record<string, Phaser.GameObjects.Sprite> = {};
+  private enemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
 
   private nextEnemyId = 0;
   private nextBulletId = 0;
@@ -79,11 +77,13 @@ export class MainScene extends Phaser.Scene {
     isHost?: boolean;
     roomCode?: string | null;
     sendPeerMessage?: (msg: any) => void;
+    localPeerId?: string;
   }) {
     super({ key: 'MainScene' });
     this.isHost = !!opts?.isHost;
     this.roomCode = opts?.roomCode ?? null;
     this.sendPeerMessage = opts?.sendPeerMessage ?? null;
+    this.localPeerId = opts?.localPeerId ?? null;
   }
 
   preload() {
@@ -134,7 +134,11 @@ export class MainScene extends Phaser.Scene {
       this.isHost ? 'player' : 'guest'
     );
 
+    this.player.setData('syncId', this.localPeerId);
     this.playerSprites[this.localPeerId] = this.player;
+    if (this.isHost && this.localPeerId) {
+      this.entityLookup[this.localPeerId] = this.player;
+    }
 
     this.player.setDepth(2);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
@@ -338,10 +342,18 @@ export class MainScene extends Phaser.Scene {
     body.setVelocity(0, 0);
   }
 
-  private createEnemySprite(definition: EnemyConfig, x: number, y: number) {
-    const enemyId = `enemy-${++this.nextEnemyId}`;
+  private resolveEnemyTextureKey(definitionId: string, partId?: string): string {
+    if (partId) {
+      const partKey = `${definitionId}::${partId}`;
+      if (this.textures.exists(partKey)) return partKey;
+    }
+    return this.textures.exists(definitionId) ? definitionId : 'enemy';
+  }
+
+  private createEnemySprite(definition: EnemyConfig, x: number, y: number, forcedId?: string) {
+    const enemyId = forcedId ?? `enemy-${++this.nextEnemyId}`;
     if (definition.type === 'standard') {
-      const textureKey = this.textures.exists(definition.id) ? definition.id : 'enemy';
+      const textureKey = this.resolveEnemyTextureKey(definition.id);
       const sprite = this.enemies.create(x, y, textureKey);
       if (!sprite) return null;
 
@@ -366,15 +378,15 @@ export class MainScene extends Phaser.Scene {
       sprite.setData('attackProjectileSpeed', definition.attack.projectileSpeed ?? 220);
       sprite.setData('orbitRadius', definition.movement.orbitRadius ?? 0);
 
+      this.entityLookup[enemyId] = sprite;
+
       return sprite;
     }
 
     // Boss: create a core sprite (root) and individual part sprites for each part
     const bossDef = definition;
     const corePart = bossDef.parts.find((p) => p.isCore) || bossDef.parts[0];
-    const coreKey = this.textures.exists(`${bossDef.id}::${corePart.partId}`)
-      ? `${bossDef.id}::${corePart.partId}`
-      : bossDef.id;
+    const coreKey = this.resolveEnemyTextureKey(bossDef.id, corePart.partId);
 
     const coreSprite = this.enemies.create(x, y, coreKey);
     if (!coreSprite) return null;
@@ -401,12 +413,12 @@ export class MainScene extends Phaser.Scene {
     coreSprite.setData('bossPhases', bossDef.phases);
     coreSprite.setData('bossPhaseIndex', 0);
 
+    this.entityLookup[enemyId] = coreSprite;
+
     // Create non-core parts as independent sprites (so bullets can collide with them)
     bossDef.parts.forEach((part) => {
       if (part.partId === corePart.partId) return;
-      const key = this.textures.exists(`${bossDef.id}::${part.partId}`)
-        ? `${bossDef.id}::${part.partId}`
-        : bossDef.id;
+      const key = this.resolveEnemyTextureKey(bossDef.id, part.partId);
       const partSprite = this.enemies.create(x + (part.offsetX ?? 0), y + (part.offsetY ?? 0), key);
       if (!partSprite) return;
       partSprite.setData('syncId', `${enemyId}::${part.partId}`);
@@ -425,6 +437,8 @@ export class MainScene extends Phaser.Scene {
       partSprite.setCollideWorldBounds(true);
       partSprite.setDepth(2);
       this.configureHeavyBossSprite(partSprite);
+
+      this.entityLookup[`${enemyId}::${part.partId}`] = partSprite;
     });
 
     return coreSprite;
@@ -442,6 +456,16 @@ export class MainScene extends Phaser.Scene {
         this.broadcastEffect(definition.type === 'boss' ? 'big-spawn' : 'spawn');
       }
     });
+  }
+
+  // For host-only, runtime-decided enemy creation (e.g. a spawner enemy producing
+  // more enemies over time) — unlike the deterministic initMapEnemies() layout, these
+  // aren't created independently on both sides, so they're pushed as a GameEvent and
+  // built by handleEvent() on host and clients alike, the same way bullets are.
+  spawnEnemy(definition: EnemyConfig, x: number, y: number): string {
+    const enemyId = `enemy-${++this.nextEnemyId}`;
+    this.eventQueue.push({ type: 'enemy-created', enemyId, definitionId: definition.id, x, y });
+    return enemyId;
   }
 
   private updateEnemyBehavior(
@@ -563,13 +587,6 @@ export class MainScene extends Phaser.Scene {
     this.sendPeerMessage(message);
   }
 
-  private showEnemyImpact(enemySprite: Phaser.GameObjects.Sprite | null) {
-    if (!enemySprite || !enemySprite.active) return;
-    this.emitter.explode(10, enemySprite.x, enemySprite.y);
-    this.cameras.main.shake(30, 0.003);
-    if (synth) synth.playExplosion();
-  }
-
   getEntityBySyncId(syncId: string): Phaser.Physics.Arcade.Sprite | null {
     return this.entityLookup[syncId] as Phaser.Physics.Arcade.Sprite;
   }
@@ -615,6 +632,37 @@ export class MainScene extends Phaser.Scene {
 
         break;
       }
+      case 'enemy-created': {
+        if (this.entityLookup[event.enemyId]) break; // already known (e.g. from initMapEnemies)
+        const definition = enemyDefinitionLookup[event.definitionId];
+        if (definition) {
+          this.createEnemySprite(definition, event.x, event.y, event.enemyId);
+        }
+        break;
+      }
+      case 'enemy-destroyed': {
+        const sprite = this.getEntityBySyncId(event.enemyId);
+        if (sprite && sprite.active) {
+          this.emitter.explode(8, sprite.x, sprite.y);
+          sprite.destroy();
+        }
+        delete this.entityLookup[event.enemyId];
+
+        if (event.cascadeParentId) {
+          this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
+            if (e.active && e.getData('parentEnemy') === event.cascadeParentId) {
+              const partSyncId = e.getData('syncId') as string;
+              e.destroy();
+              delete this.entityLookup[partSyncId];
+            }
+          });
+        }
+        break;
+      }
+      case 'player-left': {
+        this.removeRemotePlayer(event.peerId);
+        break;
+      }
     }
   }
 
@@ -658,30 +706,22 @@ export class MainScene extends Phaser.Scene {
 
       if (hp <= 0) {
         const isCore = !!enemySprite.getData('isCore');
-        const parentEnemyId = enemySprite.getData('parentEnemy') as string | undefined;
+        const syncId = enemySprite.getData('syncId') as string;
 
         // Award score for this part
         const partScore = (enemySprite.getData('scoreValue') as number) || 0;
         this.score += partScore;
 
         if (isCore) {
-          // Destroy all remaining parts that belong to this boss
-          this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
-            try {
-              if (e && e.getData && e.getData('parentEnemy') === parentEnemyId) {
-                this.emitter.explode(8, e.x, e.y);
-                e.destroy();
-              }
-            } catch (err) {
-              // ignore
-            }
-          });
-
           this.broadcastEffect('explosion', enemySprite.x, enemySprite.y);
-          enemySprite.destroy();
+          this.eventQueue.push({
+            type: 'enemy-destroyed',
+            enemyId: syncId,
+            cascadeParentId: syncId,
+          });
         } else {
-          this.showEnemyImpact(enemySprite);
-          enemySprite.destroy();
+          this.broadcastEffect('hit', enemySprite.x, enemySprite.y);
+          this.eventQueue.push({ type: 'enemy-destroyed', enemyId: syncId });
         }
 
         this.scoreText.setText(
@@ -704,7 +744,10 @@ export class MainScene extends Phaser.Scene {
     enemySprite.setData('hp', hp);
     if (hp <= 0) {
       this.broadcastEffect('explosion', enemySprite.x, enemySprite.y);
-      enemySprite.destroy();
+      this.eventQueue.push({
+        type: 'enemy-destroyed',
+        enemyId: enemySprite.getData('syncId') as string,
+      });
       const scoreValue = enemySprite.getData('scoreValue') as number | undefined;
       this.score += scoreValue ?? 10;
       this.scoreText.setText(
@@ -785,14 +828,18 @@ export class MainScene extends Phaser.Scene {
     const rp = this.players.create(this.baseCenter.x, this.baseCenter.y, 'guest');
     rp.setDepth(2);
     rp.setCollideWorldBounds(true);
+    rp.setData('syncId', peerId);
     this.applyPlayerColor(rp, peerId);
     this.playerSprites[peerId] = rp;
+    this.entityLookup[peerId] = rp;
   }
 
   removeRemotePlayer(peerId: string) {
     const sprite = this.playerSprites[peerId];
+    if (!sprite) return;
     this.players.remove(sprite, true, true);
     delete this.playerSprites[peerId];
+    delete this.entityLookup[peerId];
 
     const indicatorKey = `indicator-remote-${peerId}`;
     if (this.playerIndicators[indicatorKey]) {
@@ -801,88 +848,12 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
-  // private syncEnemySprites(enemies: EnemySnapshot[]) {
-  //   const nextEnemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
-
-  //   function createEnemySprite(scene: MainScene, enemy: EnemySnapshot): Phaser.GameObjects.Sprite {
-  //     let textureKey = 'enemy';
-  //     const idParts = (enemy.id || '').split('::');
-  //     if (idParts.length === 2) {
-  //       const partKey = `${enemy.type}::${idParts[1]}`;
-  //       if (scene.textures.exists(partKey)) textureKey = partKey;
-  //       else if (scene.textures.exists(enemy.type)) textureKey = enemy.type;
-  //     } else {
-  //       textureKey = scene.textures.exists(enemy.type) ? enemy.type : 'enemy';
-  //     }
-
-  //     const sprite = scene.enemies.create(enemy.x, enemy.y, textureKey);
-  //     sprite.setData('syncId', enemy.id);
-
-  //     // If this is a part (id contains ::), store part metadata
-  //     if (idParts.length === 2) {
-  //       sprite.setData('isPart', true);
-  //       sprite.setData('partId', idParts[1]);
-  //       sprite.setData('parentEnemy', idParts[0]);
-  //       sprite.setData('isCore', idParts[1] === 'core');
-  //     }
-
-  //     return sprite;
-  //   }
-
-  //   function syncEnemySprite(sprite: Phaser.GameObjects.Sprite, enemy: EnemySnapshot) {
-  //     sprite.setPosition(enemy.x, enemy.y);
-  //     sprite.rotation = enemy.r;
-  //     sprite.setVisible(true);
-  //     sprite.setActive(true);
-  //     sprite.setData('type', enemy.type);
-  //     // lightweight hp on clients for visuals; authoritative HP stays on host
-  //     sprite.setData(
-  //       'hp',
-  //       enemy.type === 'spawner' ? 100 : enemy.type === 'big' ? 5 : enemy.type === 'laser' ? 3 : 1
-  //     );
-  //     // sprite.setData('laserState', enemy.laserState || 'idle');
-  //     // sprite.setData('laserAngle', enemy.laserAngle ?? enemy.r);
-  //   }
-
-  //   enemies.forEach((enemy) => {
-  //     // Use the sync id to detect boss part sprites: format 'enemy-<n>::<partId>'
-  //     let sprite = this.enemySprites[enemy.id];
-  //     if (!sprite) {
-  //       sprite = createEnemySprite(this, enemy);
-  //     }
-
-  //     syncEnemySprite(sprite, enemy);
-
-  //     nextEnemySprites[enemy.id] = sprite;
-  //   });
-
-  //   Object.keys(this.enemySprites).forEach((id) => {
-  //     if (!nextEnemySprites[id]) {
-  //       const sprite = this.enemySprites[id];
-  //       if (sprite) {
-  //         this.showEnemyImpact(sprite);
-  //         sprite.destroy();
-  //       }
-  //       delete this.enemySprites[id];
-  //     }
-  //   });
-
-  //   this.enemySprites = nextEnemySprites;
-  // }
-
+  // Full snapshot sent on every client connect/disconnect, so a (re)joining client can
+  // catch up on players, in-flight bullets, and any enemies it hasn't seen yet (most
+  // enemies are already created locally via the deterministic initMapEnemies() layout
+  // and just get repositioned here — see receiveEntitySnapshot).
   broadcastState() {
     if (!this.isHost || !this.sendPeerMessage) return;
-    const players: Record<string, { x: number; y: number; r: number; isDead: boolean }> = {};
-    players['host'] = {
-      x: this.player!.x,
-      y: this.player!.y,
-      r: this.player!.rotation,
-      isDead: !!this.player!.getData('isDead'),
-    };
-    for (const id in this.playerSprites) {
-      const rp = this.playerSprites[id];
-      players[id] = { x: rp.x, y: rp.y, r: rp.rotation, isDead: !!rp.getData('isDead') };
-    }
 
     const state: PeerEntityMessage = {
       type: 'entities',
@@ -893,14 +864,17 @@ export class MainScene extends Phaser.Scene {
         r: e.rotation,
         isDead: e.getData('isDead') as boolean,
       })),
+      // Most enemies are created deterministically by initMapEnemies() on both sides and
+      // just need this for late-joining clients to catch up (see receiveEntitySnapshot);
+      // enemies spawned dynamically at runtime (e.g. by a spawner) rely on this too, since
+      // a client that joins after the spawn never saw its 'enemy-created' event.
       enemies: this.enemies.getChildren().map((e: Phaser.GameObjects.Sprite) => ({
         id: (e.getData('syncId') as string) || '',
         x: e.x,
         y: e.y,
         r: e.rotation,
-        type: e.getData('type') as string,
-        laserState: e.getData('laserState'),
-        laserAngle: e.getData('laserAngle'),
+        definitionId: e.getData('enemyId') as string,
+        partId: e.getData('isPart') ? (e.getData('partId') as string) : undefined,
       })),
       bullets: this.bullets.getChildren().map((b: Phaser.GameObjects.Sprite) => ({
         id: (b.getData('syncId') as string) || '',
@@ -934,7 +908,8 @@ export class MainScene extends Phaser.Scene {
   syncSprites<T extends { id: string; x: number; y: number; r: number }>(
     entities: T[],
     sprites: Record<string, Phaser.GameObjects.Sprite>,
-    initSprite: (entity: T) => Phaser.GameObjects.Sprite
+    initSprite: (entity: T) => Phaser.GameObjects.Sprite,
+    onRemove?: (id: string) => void
   ) {
     const existing = new Set<string>();
 
@@ -957,29 +932,70 @@ export class MainScene extends Phaser.Scene {
 
     const forDeletion = Object.keys(sprites).filter((id) => !existing.has(id));
 
-    for (const id in forDeletion) {
+    for (const id of forDeletion) {
       sprites[id].destroy();
       delete sprites[id];
+      onRemove?.(id);
     }
   }
 
+  // Players: the local player's own sprite is already registered under its own
+  // syncId (see create()), so syncSprites reuses and repositions it rather than
+  // creating a duplicate "self" sprite from the host's snapshot.
   receiveEntitySnapshot(data: PeerEntityMessage) {
-    this.syncSprites(data.enemies, this.enemySprites, (enemy) => {
-      const sprite = this.enemies.create(enemy.x, enemy.y, enemy.type);
-      return sprite;
-    });
+    this.syncSprites(
+      data.players,
+      this.playerSprites,
+      (player) => {
+        const sprite = this.players.create(player.x, player.y, 'guest');
+        sprite.setDepth(2);
+        sprite.setData('syncId', player.id);
+        this.applyPlayerColor(sprite, player.id);
+        this.entityLookup[player.id] = sprite;
+        return sprite;
+      },
+      (id) => delete this.entityLookup[id]
+    );
 
-    this.syncSprites(data.players, this.playerSprites, (player) => {
-      const sprite = this.players.create(player.x, player.y, 'guest');
-      sprite.setDepth(2);
-      this.applyPlayerColor(sprite, player.id);
-      return sprite;
-    });
+    this.syncSprites(
+      data.bullets,
+      this.bulletSprites,
+      (bullet) => {
+        const existing = this.entityLookup[bullet.id];
+        if (existing) return existing;
+        const sprite = this.bullets.create(bullet.x, bullet.y, 'bullet');
+        sprite.setData('syncId', bullet.id);
+        this.entityLookup[bullet.id] = sprite;
+        return sprite;
+      },
+      (id) => delete this.entityLookup[id]
+    );
 
-    this.syncSprites(data.bullets, this.bulletSprites, (bullet) => {
-      const sprite = this.bullets.create(bullet.x, bullet.y, 'bullet');
-      return sprite;
-    });
+    // Enemies from the deterministic mission layout already exist locally (via
+    // initMapEnemies, same id on every peer) and are just reused/repositioned here.
+    // Only enemies this client has never seen — e.g. spawned by a spawner before it
+    // joined — actually get created.
+    this.syncSprites(
+      data.enemies,
+      this.enemySprites,
+      (enemy) => {
+        const existing = this.entityLookup[enemy.id];
+        if (existing) return existing;
+        const textureKey = this.resolveEnemyTextureKey(enemy.definitionId, enemy.partId);
+        const sprite = this.enemies.create(enemy.x, enemy.y, textureKey);
+        sprite.setData('syncId', enemy.id);
+        sprite.setData('enemyId', enemy.definitionId);
+        sprite.setData('type', enemy.definitionId);
+        if (enemy.partId) {
+          sprite.setData('isPart', true);
+          sprite.setData('partId', enemy.partId);
+          sprite.setData('parentEnemy', enemy.id.split('::')[0]);
+        }
+        this.entityLookup[enemy.id] = sprite;
+        return sprite;
+      },
+      (id) => delete this.entityLookup[id]
+    );
   }
 
   // Called on clients when a host-originating message arrives
@@ -1017,8 +1033,9 @@ export class MainScene extends Phaser.Scene {
   }
 
   handleClientDisconnect(peerId: string) {
-    // remove any remote player state and indicators
+    // remove any remote player state and indicators, and tell other clients
     this.removeRemotePlayer(peerId);
+    this.eventQueue.push({ type: 'player-left', peerId });
   }
 
   handleClientConnect(peerId: string) {
@@ -1465,29 +1482,16 @@ export class MainScene extends Phaser.Scene {
 
     const activeEnemies: Array<{ x: number; y: number; state?: string; angle?: number }> = [];
 
-    if (this.isHost) {
-      this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
-        if (e.active && e.getData('type') === 'laser') {
-          activeEnemies.push({
-            x: e.x,
-            y: e.y,
-            state: e.getData('laserState'),
-            angle: e.getData('laserAngle'),
-          });
-        }
-      });
-    } else {
-      Object.values(this.enemySprites).forEach((e) => {
-        if (e.active && e.getData('type') === 'laser') {
-          activeEnemies.push({
-            x: e.x,
-            y: e.y,
-            state: e.getData('laserState'),
-            angle: e.getData('laserAngle'),
-          });
-        }
-      });
-    }
+    this.enemies.getChildren().forEach((e: Phaser.GameObjects.Sprite) => {
+      if (e.active && e.getData('type') === 'laser') {
+        activeEnemies.push({
+          x: e.x,
+          y: e.y,
+          state: e.getData('laserState'),
+          angle: e.getData('laserAngle'),
+        });
+      }
+    });
 
     activeEnemies.forEach((e) => {
       const state = e.state;
