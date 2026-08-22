@@ -4,15 +4,33 @@ import type { GameEvent } from './events';
 type BulletCreatedEvent = Extract<GameEvent, { type: 'bullet-created' }>;
 type BulletDestroyedEvent = Extract<GameEvent, { type: 'bullet-destroyed' }>;
 
-// How long a bullet flies before it expires of its own accord. Every peer runs
-// this timer off its own copy of the creation event, so an expiry costs no
-// network traffic at all — unlike a hit, which is an authoritative host call.
-export const BULLET_LIFETIME_MS = 1500;
+// How far a bullet flies before it expires of its own accord. The leash is a
+// distance rather than a duration because speeds differ by more than 6x — player
+// fire travels at 1000px/s, enemy projectiles crawl at 160-220px/s — so a single
+// shared lifetime would have enemy fire winking out a couple of hundred pixels
+// from the muzzle while player fire still crossed the map.
+//
+// The arena is 2000px across, so at this range nothing ever expires while it is
+// still on someone's screen. It exists only to catch bullets that leave the world
+// through a gap in the outer wall: those hit nothing, so without it they fly
+// forever and accumulate for the rest of the mission.
+export const BULLET_MAX_RANGE = 2000;
 
-// Clients keep their copy a little longer than the host does, so a bullet that
-// the host destroys right at the edge of its life (a hit landing on the last
-// frame) is still around to receive the 'bullet-destroyed' event.
+// Fallback for a bullet with no usable speed, so a bad definition can't produce
+// an infinite lifetime and reintroduce the accumulation this guards against.
+const FALLBACK_LIFETIME_MS = 3000;
+
+// Clients keep their copy a little longer than the host does, so a bullet the
+// host destroys right at the edge of its range (a hit landing on the last frame)
+// is still around to receive the 'bullet-destroyed' event.
 const CLIENT_BULLET_GRACE_MS = 1000;
+
+// Every peer runs this off its own copy of the creation event, so an expiry costs
+// no network traffic at all — unlike a hit, which is an authoritative host call.
+function lifetimeForSpeed(speed: number): number {
+  if (!(speed > 0)) return FALLBACK_LIFETIME_MS;
+  return (BULLET_MAX_RANGE / speed) * 1000;
+}
 
 export interface BulletManagerOptions {
   scene: Phaser.Scene;
@@ -83,13 +101,7 @@ export class BulletManager {
     // 1000 px/s was drawn ~100px behind where the host had it.
     this.launch(bulletSprite, event.angle, event.speed);
 
-    const lifetime = this.isHost ? BULLET_LIFETIME_MS : BULLET_LIFETIME_MS + CLIENT_BULLET_GRACE_MS;
-    const expiresAt = this.scene.time.now + lifetime;
-
-    bulletSprite.update = (time: number) => {
-      if (time < expiresAt) return;
-      this.expireBullet(bulletSprite);
-    };
+    this.leash(bulletSprite, lifetimeForSpeed(event.speed));
   }
 
   private launch(bulletSprite: Phaser.GameObjects.Sprite, angle: number, speed: number) {
@@ -105,7 +117,14 @@ export class BulletManager {
   // a stray extra bullet-flight is cheaper than one that vanishes early.
   adoptBullet(bulletSprite: Phaser.GameObjects.Sprite, angle: number, speed: number) {
     this.launch(bulletSprite, angle, speed);
-    const expiresAt = this.scene.time.now + BULLET_LIFETIME_MS + CLIENT_BULLET_GRACE_MS;
+    this.leash(bulletSprite, lifetimeForSpeed(speed));
+  }
+
+  // Gives the bullet its own expiry deadline. Clients hold theirs a little past
+  // the host's so an authoritative destroy always finds something to destroy.
+  private leash(bulletSprite: Phaser.GameObjects.Sprite, lifetime: number) {
+    const expiresAt = this.scene.time.now + lifetime + (this.isHost ? 0 : CLIENT_BULLET_GRACE_MS);
+
     bulletSprite.update = (time: number) => {
       if (time < expiresAt) return;
       this.expireBullet(bulletSprite);
