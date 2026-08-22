@@ -1279,6 +1279,10 @@ export class MainScene extends Phaser.Scene {
         const { state } = snapshot;
 
         for (const pos of state) {
+          if (pos.id === this.localPeerId) {
+            this.reconcileLocalPlayer(pos.x as number, pos.y as number);
+            continue;
+          }
           const entity = this.entityLookup[pos.id];
           if (entity) {
             entity.x = pos.x as number;
@@ -1308,6 +1312,42 @@ export class MainScene extends Phaser.Scene {
     if (!this.isHost || !this.sendPeerMessage) return;
     const message: PeerPositionMessage = { type: 'positions', snapshot };
     this.sendPeerMessage(message);
+  }
+
+  // The client predicts its own player locally from input rather than waiting on the
+  // host's snapshot (that's what keeps movement responsive). Left alone, that prediction
+  // drifts from the host's authoritative simulation — e.g. after a wall collision the two
+  // physics steps can resolve slightly differently — and nothing ever pulled it back, so
+  // the drift was permanent.
+  //
+  // The host's snapshot is always ~50-150ms stale (network + interpolation buffer), so
+  // while the player is actively moving that gap is just latency, not drift — nudging
+  // toward it every frame means fighting your own input each frame, which reads as bounce.
+  // Only reconcile once movement has stopped, when a lingering gap is real drift rather
+  // than lag; a huge gap (e.g. just reconnected) still snaps immediately either way.
+  private reconcileLocalPlayer(hostX: number, hostY: number) {
+    const player = this.player!;
+    const dx = hostX - player.x;
+    const dy = hostY - player.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    const SNAP_THRESHOLD = 150;
+    const CORRECTION_RATE = 0.1;
+
+    if (distance > SNAP_THRESHOLD) {
+      player.x = hostX;
+      player.y = hostY;
+      return;
+    }
+
+    const body = player.body as Phaser.Physics.Arcade.Body;
+    const isMoving = body.velocity.x !== 0 || body.velocity.y !== 0;
+    if (isMoving) return;
+
+    if (distance > 1) {
+      player.x += dx * CORRECTION_RATE;
+      player.y += dy * CORRECTION_RATE;
+    }
   }
 
   private broadcastEventQueue(eventQueue: GameEvent[]) {
