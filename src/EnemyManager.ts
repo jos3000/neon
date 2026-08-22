@@ -14,7 +14,7 @@ export interface EnemyManagerOptions {
   pushEvent: (event: GameEvent) => void;
   broadcastEffect: (effect: PeerEffectMessage['effect'], x?: number, y?: number) => void;
   addScore: (amount: number) => void;
-  nextBulletId: () => string;
+  fireBullet: (x: number, y: number, angle: number, speed: number) => void;
 }
 
 // Owns everything about turning an EnemyConfig into live sprites and driving
@@ -32,7 +32,7 @@ export class EnemyManager {
   private pushEvent: (event: GameEvent) => void;
   private broadcastEffect: (effect: PeerEffectMessage['effect'], x?: number, y?: number) => void;
   private addScore: (amount: number) => void;
-  private nextBulletId: () => string;
+  private fireBullet: (x: number, y: number, angle: number, speed: number) => void;
 
   private nextEnemyId = 0;
   private laserGraphics: Phaser.GameObjects.Graphics;
@@ -48,7 +48,7 @@ export class EnemyManager {
     this.pushEvent = options.pushEvent;
     this.broadcastEffect = options.broadcastEffect;
     this.addScore = options.addScore;
-    this.nextBulletId = options.nextBulletId;
+    this.fireBullet = options.fireBullet;
 
     this.enemies = this.scene.physics.add.group({ collideWorldBounds: true });
     this.laserGraphics = this.scene.add.graphics().setDepth(5);
@@ -318,14 +318,7 @@ export class EnemyManager {
           time > (enemy.getData('nextShotAt') || 0)
         ) {
           const angle = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
-          this.pushEvent({
-            type: 'bullet-created',
-            bulletId: this.nextBulletId(),
-            x: enemy.x,
-            y: enemy.y,
-            angle,
-            speed: definition.attack.projectileSpeed ?? 220,
-          });
+          this.fireBullet(enemy.x, enemy.y, angle, definition.attack.projectileSpeed ?? 220);
           enemy.setData('nextShotAt', time + definition.attack.fireRateMs);
         }
 
@@ -338,14 +331,7 @@ export class EnemyManager {
             const spread = (i - ((definition.attack.projectileCount ?? 3) - 1) / 2) * 0.15;
             const angle =
               Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y) + spread;
-            this.pushEvent({
-              type: 'bullet-created',
-              bulletId: this.nextBulletId(),
-              x: enemy.x,
-              y: enemy.y,
-              angle,
-              speed: definition.attack.projectileSpeed ?? 180,
-            });
+            this.fireBullet(enemy.x, enemy.y, angle, definition.attack.projectileSpeed ?? 180);
           }
           enemy.setData('nextShotAt', time + definition.attack.fireRateMs);
         }

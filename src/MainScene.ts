@@ -1,13 +1,15 @@
 import { SnapshotInterpolation } from '@geckos.io/snapshot-interpolation';
 import { Snapshot } from '@geckos.io/snapshot-interpolation/lib/types';
 import Phaser from 'phaser';
+import { BulletManager } from './BulletManager';
 import { Controls } from './controls';
 import { enemyDefinitionLookup, MissionConfig } from './data/data';
 import { EnemyManager } from './EnemyManager';
 import { GameEvent } from './events';
+import { PlayerManager } from './PlayerManager';
+import { TrackerManager } from './TrackerManager';
 import {
   PeerEffectMessage,
-  PeerInputMessage,
   HostPeerMessage,
   ClientPeerMessage,
   PeerEntityMessage,
@@ -38,15 +40,13 @@ export class MainScene extends Phaser.Scene {
 
   private player: Phaser.Physics.Arcade.Sprite;
 
-  private bullets!: Phaser.Physics.Arcade.Group;
-  private players!: Phaser.Physics.Arcade.Group;
+  private playerManager!: PlayerManager;
+  private bulletManager!: BulletManager;
   private enemyManager!: EnemyManager;
+  private trackerManager!: TrackerManager;
 
-  private playerSprites: Record<string, Phaser.Physics.Arcade.Sprite> = {};
   private bulletSprites: Record<string, Phaser.GameObjects.Sprite> = {};
   private enemySprites: Record<string, Phaser.GameObjects.Sprite> = {};
-
-  private nextBulletId = 0;
 
   private emitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private scoreText!: Phaser.GameObjects.Text;
@@ -58,8 +58,6 @@ export class MainScene extends Phaser.Scene {
   private localPeerId: string | null = null;
   // private hostPlayerSprite?: Phaser.GameObjects.Sprite;
   // private otherRemoteSprites: Record<string, Phaser.GameObjects.Sprite> = {};
-  private playerIndicators: Record<string, Phaser.GameObjects.Graphics> = {};
-  private playerColors: Record<string, number> = {};
 
   private baseCenter = { x: 1000, y: 1600 };
   private baseRadius = 180;
@@ -124,24 +122,33 @@ export class MainScene extends Phaser.Scene {
     this.fireRate = 120;
     this.gameStarted = true;
 
-    this.players = this.physics.add.group({ collideWorldBounds: true });
+    this.bulletManager = new BulletManager({
+      scene: this,
+      entityLookup: this.entityLookup,
+      isHost: this.isHost,
+      pushEvent: (event) => this.eventQueue.push(event),
+      explode: (count, x, y) => this.emitter.explode(count, x, y),
+    });
 
-    this.player = this.players.create(
-      this.baseCenter.x,
-      this.baseCenter.y,
-      this.isHost ? 'player' : 'guest'
+    this.playerManager = new PlayerManager({
+      scene: this,
+      entityLookup: this.entityLookup,
+      baseCenter: this.baseCenter,
+      isHost: this.isHost,
+      isGameOver: () => this.gameOver,
+      isInBaseArea: (x, y) => this.isInBaseArea(x, y),
+      broadcastEffect: (effect, x, y) => this.broadcastEffect(effect, x, y),
+      fireBullet: (x, y, angle, speed) => this.bulletManager.fire(x, y, angle, speed),
+    });
+
+    this.trackerManager = new TrackerManager({ scene: this });
+
+    this.player = this.playerManager.createLocalPlayer(
+      this.isHost ? 'player' : 'guest',
+      this.localPeerId,
+      this.isHost
     );
-
-    this.player.setData('syncId', this.localPeerId);
-    this.playerSprites[this.localPeerId] = this.player;
-    if (this.isHost && this.localPeerId) {
-      this.entityLookup[this.localPeerId] = this.player;
-    }
-
-    this.player.setDepth(2);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
-
-    this.bullets = this.physics.add.group({ runChildUpdate: true });
 
     this.enemyManager = new EnemyManager({
       scene: this,
@@ -153,22 +160,34 @@ export class MainScene extends Phaser.Scene {
       pushEvent: (event) => this.eventQueue.push(event),
       broadcastEffect: (effect, x, y) => this.broadcastEffect(effect, x, y),
       addScore: (amount) => this.addScore(amount),
-      nextBulletId: () => `bullet-${++this.nextBulletId}`,
+      fireBullet: (x, y, angle, speed) => this.bulletManager.fire(x, y, angle, speed),
     });
 
     // Core Colliders
 
     if (this.isHost) {
-      this.physics.add.collider(this.players, this.walls);
-      this.physics.add.collider(this.bullets, this.walls, this.hitWall, undefined, this);
+      this.physics.add.collider(this.playerManager.players, this.walls);
       this.physics.add.collider(
-        this.bullets,
+        this.bulletManager.bullets,
+        this.walls,
+        this.bulletManager.hitWall,
+        undefined,
+        this.bulletManager
+      );
+      this.physics.add.collider(
+        this.bulletManager.bullets,
         this.enemyManager.enemies,
         this.enemyManager.handleBulletHit,
         undefined,
         this.enemyManager
       );
-      this.physics.add.collider(this.players, this.enemyManager.enemies, this.hitPlayer, undefined, this);
+      this.physics.add.collider(
+        this.playerManager.players,
+        this.enemyManager.enemies,
+        this.playerManager.hitPlayer,
+        undefined,
+        this.playerManager
+      );
       this.physics.add.collider(this.enemyManager.enemies, this.walls);
     }
 
@@ -240,108 +259,6 @@ export class MainScene extends Phaser.Scene {
     this.enemyManager.initMapEnemies(missionConf.enemySpawns);
   }
 
-  private getPlayerColor(id: string): number {
-    if (this.playerColors[id] !== undefined) return this.playerColors[id];
-
-    const palette = [0xff5d73, 0x4ecdc4, 0xffd166, 0x6c5ce7, 0x2ec4b6, 0xff8fab, 0x7f5af0];
-    let hash = 0;
-    for (let i = 0; i < id.length; i++) {
-      hash = (hash << 5) - hash + id.charCodeAt(i);
-      hash |= 0;
-    }
-
-    const color = palette[Math.abs(hash) % palette.length];
-    this.playerColors[id] = color;
-    return color;
-  }
-
-  private applyPlayerColor(sprite: Phaser.GameObjects.Sprite, id: string) {
-    const color = this.getPlayerColor(id);
-    sprite.setTint(color);
-    sprite.setData('playerColor', color);
-  }
-
-  private updateOffscreenIndicators() {
-    const camera = this.cameras.main;
-    const viewLeft = camera.scrollX;
-    const viewRight = camera.scrollX + camera.width;
-    const viewTop = camera.scrollY;
-    const viewBottom = camera.scrollY + camera.height;
-    const trackedSprites: Array<{ id: string; sprite: Phaser.GameObjects.Sprite }> = [];
-
-    Object.entries(this.playerSprites).forEach(([id, sprite]) => {
-      if (id !== this.localPeerId) {
-        trackedSprites.push({ id, sprite });
-      }
-    });
-
-    trackedSprites.forEach(({ id, sprite }) => {
-      const indicatorId = `indicator-${id}`;
-      if (!this.playerIndicators[indicatorId]) {
-        this.playerIndicators[indicatorId] = this.add
-          .graphics({ x: 0, y: 0 })
-          .setScrollFactor(0)
-          .setDepth(250);
-      }
-      const indicator = this.playerIndicators[indicatorId];
-      const isVisible =
-        sprite.x >= viewLeft &&
-        sprite.x <= viewRight &&
-        sprite.y >= viewTop &&
-        sprite.y <= viewBottom;
-
-      if (isVisible) {
-        indicator.clear();
-        indicator.setVisible(false);
-        return;
-      }
-
-      const screenX = sprite.x - viewLeft;
-      const screenY = sprite.y - viewTop;
-      const centerX = camera.width / 2;
-      const centerY = camera.height / 2;
-      const relX = screenX - centerX;
-      const relY = screenY - centerY;
-      const scale = Math.max(
-        Math.abs(relX) / (camera.width / 2),
-        Math.abs(relY) / (camera.height / 2)
-      );
-      const edgeX = centerX + relX / scale;
-      const edgeY = centerY + relY / scale;
-      const angle = Math.atan2(screenY - edgeY, screenX - edgeX);
-      const pointerSize = 14;
-      const tipX = edgeX;
-      const tipY = edgeY;
-      const baseX = tipX - Math.cos(angle) * pointerSize;
-      const baseY = tipY - Math.sin(angle) * pointerSize;
-      const leftX = baseX + Math.cos(angle + Math.PI / 2) * pointerSize * 0.6;
-      const leftY = baseY + Math.sin(angle + Math.PI / 2) * pointerSize * 0.6;
-      const rightX = baseX + Math.cos(angle - Math.PI / 2) * pointerSize * 0.6;
-      const rightY = baseY + Math.sin(angle - Math.PI / 2) * pointerSize * 0.6;
-      const color = sprite.getData('playerColor') || 0xffffff;
-
-      indicator.clear();
-      indicator.setVisible(true);
-      indicator.lineStyle(2, color, 1);
-      indicator.beginPath();
-      indicator.moveTo(tipX, tipY);
-      indicator.lineTo(leftX, leftY);
-      indicator.lineTo(rightX, rightY);
-      indicator.closePath();
-      indicator.strokePath();
-      indicator.fillStyle(color, 1);
-      indicator.fillPath();
-    });
-
-    Object.keys(this.playerIndicators).forEach((indicatorKey) => {
-      const isTracked = trackedSprites.some(({ id }) => `indicator-${id}` === indicatorKey);
-      if (!isTracked) {
-        this.playerIndicators[indicatorKey].destroy();
-        delete this.playerIndicators[indicatorKey];
-      }
-    });
-  }
-
   private isInBaseArea(x: number, y: number) {
     return (
       Phaser.Math.Distance.Between(this.baseCenter.x, this.baseCenter.y, x, y) <= this.baseRadius
@@ -397,46 +314,11 @@ export class MainScene extends Phaser.Scene {
   private handleEvent(event: GameEvent) {
     switch (event.type) {
       case 'bullet-destroyed': {
-        // destroy the bullet and show an impact effect at the host's authoritative
-        // impact position (event.x/y) — the client's own bulletSprite.x/y lags behind
-        // due to snapshot interpolation, so using it here made the effect land short.
-        const bulletSprite = this.getEntityBySyncId(event.bulletId);
-        this.emitter.explode(4, event.x, event.y);
-        if (bulletSprite) {
-          bulletSprite.destroy();
-          delete this.entityLookup[event.bulletId];
-        }
+        this.bulletManager.destroyBullet(event);
         break;
       }
       case 'bullet-created': {
-        // create a new bullet with the given properties
-        const bulletSprite = this.bullets.create(event.x, event.y, 'bullet');
-        this.entityLookup[event.bulletId] = bulletSprite;
-        bulletSprite.setData('syncId', event.bulletId);
-        bulletSprite.setData('angle', event.angle);
-        bulletSprite.setDepth(1);
-        if (this.isHost) {
-          bulletSprite.setData('speed', event.speed);
-          this.physics.velocityFromRotation(
-            event.angle,
-            event.speed,
-            bulletSprite.body.velocity as Phaser.Math.Vector2
-          );
-          // TODO: potentially put this in a seperate management function
-          bulletSprite.update = function (t: number, d: number) {
-            const born = this.getData('born') || 0 + d;
-            this.setData('born', born);
-            if (born > 1500) {
-              this.eventQueue.push({
-                type: 'bullet-destroyed',
-                bulletId: this.getData('syncId'),
-                x: this.x,
-                y: this.y,
-              });
-            }
-          };
-        }
-
+        this.bulletManager.createBulletSprite(event);
         break;
       }
       case 'enemy-created': {
@@ -474,110 +356,9 @@ export class MainScene extends Phaser.Scene {
         break;
       }
       case 'player-left': {
-        this.removeRemotePlayer(event.peerId);
+        this.playerManager.removeRemotePlayer(event.peerId);
         break;
       }
-    }
-  }
-
-  hitWall(
-    bullet: Phaser.Types.Physics.Arcade.GameObjectWithBody,
-    _wall: Phaser.Types.Physics.Arcade.GameObjectWithBody
-  ) {
-    const bulletSprite = bullet as Phaser.GameObjects.Sprite;
-    this.eventQueue.push({
-      type: 'bullet-destroyed',
-      bulletId: bulletSprite.getData('syncId'),
-      x: bulletSprite.x,
-      y: bulletSprite.y,
-    });
-  }
-
-  respawnPlayer(player: Phaser.Physics.Arcade.Sprite) {
-    if (!player || !player.active) return;
-
-    const spawnX = this.baseCenter.x + Phaser.Math.Between(-80, 80);
-    const spawnY = this.baseCenter.y + Phaser.Math.Between(-80, 80);
-
-    player.setData('isDead', false);
-    player.clearTint();
-    player.setVisible(true);
-    player.body.enable = true;
-    player.body.reset(spawnX, spawnY);
-    player.setVelocity(0, 0);
-  }
-
-  handlePlayerDeath(player: Phaser.Physics.Arcade.Sprite) {
-    if (!player || !player.active || player.getData('isDead')) return;
-
-    player.setData('isDead', true);
-    player.setTint(0xff0000);
-    player.setVelocity(0, 0);
-    player.body.enable = false;
-    player.setVisible(false);
-    this.broadcastEffect('death', player.x, player.y);
-
-    this.time.delayedCall(3000, () => {
-      if (!player || !player.active) return;
-      this.respawnPlayer(player);
-    });
-  }
-
-  hitPlayer(
-    player: Phaser.Types.Physics.Arcade.GameObjectWithBody,
-    enemy: Phaser.Types.Physics.Arcade.GameObjectWithBody
-  ) {
-    if (this.gameOver) return;
-    this.handlePlayerDeath(player as Phaser.Physics.Arcade.Sprite);
-  }
-
-  getAlivePlayers(): Phaser.GameObjects.Sprite[] {
-    const alivePlayers: Phaser.GameObjects.Sprite[] = [];
-
-    for (const [id, sprite] of Object.entries(this.playerSprites)) {
-      if (sprite.visible) {
-        alivePlayers.push(sprite);
-      }
-    }
-
-    return alivePlayers;
-  }
-
-  handleRemoteInput(peerId: string, data: PeerInputMessage) {
-    if (!this.isHost || this.gameOver) return;
-    if (!this.playerSprites[peerId]) {
-      this.addRemotePlayer(peerId);
-    }
-    const rp = this.playerSprites[peerId];
-    rp.setData('moveX', data.moveX || 0);
-    rp.setData('moveY', data.moveY || 0);
-    rp.setData('aimAngle', data.aimAngle || 0);
-    rp.setData('shoot', data.shoot || false);
-    rp.setData('lastFired', rp.getData('lastFired') || 0);
-  }
-
-  addRemotePlayer(peerId: string) {
-    console.log('creating remote player');
-    const rp = this.players.create(this.baseCenter.x, this.baseCenter.y, 'guest');
-    rp.setDepth(2);
-    rp.setCollideWorldBounds(true);
-    rp.setData('syncId', peerId);
-    this.applyPlayerColor(rp, peerId);
-    this.playerSprites[peerId] = rp;
-    this.entityLookup[peerId] = rp;
-  }
-
-  removeRemotePlayer(peerId: string) {
-    const sprite = this.playerSprites[peerId];
-    if (!sprite) return;
-    this.players.remove(sprite, true, true);
-    delete this.playerSprites[peerId];
-    delete this.entityLookup[peerId];
-
-    const indicatorKey = `indicator-remote-${peerId}`;
-    if (this.playerIndicators[indicatorKey]) {
-      this.playerIndicators[indicatorKey].destroy();
-      delete this.playerIndicators[indicatorKey];
     }
   }
 
@@ -590,7 +371,7 @@ export class MainScene extends Phaser.Scene {
 
     const state: PeerEntityMessage = {
       type: 'entities',
-      players: this.players.getChildren().map((e: Phaser.GameObjects.Sprite) => ({
+      players: this.playerManager.players.getChildren().map((e: Phaser.GameObjects.Sprite) => ({
         id: (e.getData('syncId') as string) || '',
         x: e.x,
         y: e.y,
@@ -609,7 +390,7 @@ export class MainScene extends Phaser.Scene {
         definitionId: e.getData('enemyId') as string,
         partId: e.getData('isPart') ? (e.getData('partId') as string) : undefined,
       })),
-      bullets: this.bullets.getChildren().map((b: Phaser.GameObjects.Sprite) => ({
+      bullets: this.bulletManager.bullets.getChildren().map((b: Phaser.GameObjects.Sprite) => ({
         id: (b.getData('syncId') as string) || '',
         x: b.x,
         y: b.y,
@@ -678,12 +459,12 @@ export class MainScene extends Phaser.Scene {
   receiveEntitySnapshot(data: PeerEntityMessage) {
     this.syncSprites(
       data.players,
-      this.playerSprites,
+      this.playerManager.playerSprites,
       (player) => {
-        const sprite = this.players.create(player.x, player.y, 'guest');
+        const sprite = this.playerManager.players.create(player.x, player.y, 'guest');
         sprite.setDepth(2);
         sprite.setData('syncId', player.id);
-        this.applyPlayerColor(sprite, player.id);
+        this.playerManager.applyPlayerColor(sprite, player.id);
         this.entityLookup[player.id] = sprite;
         return sprite;
       },
@@ -696,7 +477,7 @@ export class MainScene extends Phaser.Scene {
       (bullet) => {
         const existing = this.entityLookup[bullet.id];
         if (existing) return existing;
-        const sprite = this.bullets.create(bullet.x, bullet.y, 'bullet');
+        const sprite = this.bulletManager.bullets.create(bullet.x, bullet.y, 'bullet');
         sprite.setData('syncId', bullet.id);
         this.entityLookup[bullet.id] = sprite;
         return sprite;
@@ -760,19 +541,19 @@ export class MainScene extends Phaser.Scene {
     if (!messages) return;
     for (const message of messages) {
       if (message.type === 'input') {
-        this.handleRemoteInput(peerId, message);
+        this.playerManager.handleRemoteInput(peerId, message);
       }
     }
   }
 
   handleClientDisconnect(peerId: string) {
     // remove any remote player state and indicators, and tell other clients
-    this.removeRemotePlayer(peerId);
+    this.playerManager.removeRemotePlayer(peerId);
     this.eventQueue.push({ type: 'player-left', peerId });
   }
 
   handleClientConnect(peerId: string) {
-    this.addRemotePlayer(peerId);
+    this.playerManager.addRemotePlayer(peerId);
     this.broadcastState();
   }
 
@@ -805,7 +586,7 @@ export class MainScene extends Phaser.Scene {
       else if (!this.gameOver) this.physics.resume();
     }
 
-    this.updateOffscreenIndicators();
+    this.trackerManager.update(this.playerManager.playerSprites, this.localPeerId);
 
     if (this.gameOver || this.isPaused || !this.gameStarted) return;
 
@@ -826,15 +607,7 @@ export class MainScene extends Phaser.Scene {
           !this.isInBaseArea(this.player!.x, this.player!.y) &&
           time > this.lastFired
         ) {
-          const bulletId = `bullet-${++this.nextBulletId}`;
-          this.eventQueue.push({
-            type: 'bullet-created',
-            bulletId,
-            x: this.player!.x,
-            y: this.player!.y,
-            angle: shootInput.angle,
-            speed: 1000,
-          });
+          this.bulletManager.fire(this.player!.x, this.player!.y, shootInput.angle, 1000);
           this.lastFired = time + this.fireRate;
         }
       } else if (moveX !== 0 || moveY !== 0) {
@@ -845,43 +618,9 @@ export class MainScene extends Phaser.Scene {
     }
 
     if (this.isHost) {
-      const speed = 350;
-      for (const id in this.playerSprites) {
-        const rp = this.playerSprites[id];
-        if (rp === this.player) continue;
-        if (rp.getData('isDead')) {
-          rp.setVelocity(0, 0);
-          continue;
-        }
+      this.playerManager.updateRemotePlayers(time, this.fireRate, this.player);
 
-        let mx = rp.getData('moveX') || 0;
-        let my = rp.getData('moveY') || 0;
-        rp.setVelocity(mx * speed, my * speed);
-
-        const isShooting = !!rp.getData('shoot');
-        const angle = rp.getData('aimAngle') || 0;
-
-        if (isShooting) {
-          rp.rotation = angle;
-        } else if (mx !== 0 || my !== 0) {
-          rp.rotation = Math.atan2(my, mx);
-        }
-
-        if (isShooting && !this.isInBaseArea(rp.x, rp.y) && time > rp.getData('lastFired')) {
-          const bulletId = `bullet-${++this.nextBulletId}`;
-          this.eventQueue.push({
-            type: 'bullet-created',
-            bulletId,
-            x: rp.x,
-            y: rp.y,
-            angle,
-            speed: 1000,
-          });
-          rp.setData('lastFired', time + this.fireRate);
-        }
-      }
-
-      const alivePlayers = this.getAlivePlayers();
+      const alivePlayers = this.playerManager.getAlivePlayers();
       this.enemyManager.update(time, alivePlayers);
 
       const snapshot = this.SI.snapshot.create(
